@@ -1,0 +1,77 @@
+# Logs
+logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+lerna-debug.log*
+
+# Dependencies
+node_modules
+
+# Build outputs
+dist
+dist-ssr
+build
+*.local
+
+# Environment files
+.env
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+
+# Vercel deployment files
+.vercel
+.vercel.json
+
+# Next.js (if using)
+.next/
+out/
+
+# Nuxt.js (if using)
+.nuxt
+
+# Cache directories
+.cache
+.parcel-cache
+.eslintcache
+.stylelintcache
+
+# Runtime data
+pids
+*.pid
+*.seed
+*.pid.lock
+
+# Coverage directory used by tools like istanbul
+coverage
+*.lcov
+
+# Editor directories and files
+.vscode/*
+!.vscode/extensions.json
+.idea
+.DS_Store
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
+
+# OS generated files
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+$RECYCLE.BIN/
+
+# Temporary files
+*.tmp
+*.temp
+
+# Package manager lock files (keep only one)
+# yarn.lock
+# pnpm-lock.yaml
+# bun.lockb
