@@ -2,7 +2,7 @@
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Link, useNavigate } from "react-router-dom";
-import { Search, Sparkles, Network, Newspaper, Settings } from "lucide-react";
+import { Search, Sparkles, Network, Newspaper, Settings, Code } from "lucide-react";
 import { useAuth } from "@/contexts/AuthContext";
 import { LoginModal, LogoutModal } from "@/components/auth";
 import { useState } from "react";
@@ -45,6 +45,14 @@ const Index = () => {
       tools: [],
       icon: Settings,
       id: "auto-prompt"
+    },
+    {
+      title: "Code Agent",
+      description: "Advanced code analysis, generation, and refactoring assistant powered by cutting-edge AI.",
+      model: "Gemini 2.5 Flash",
+      tools: [],
+      icon: Code,
+      id: "code-agent"
     },
     {
       title: "Coming Soon",

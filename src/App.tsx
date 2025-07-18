@@ -20,6 +20,7 @@ import MultiAgentChat from "./pages/MultiAgentChat";
 import DataAnalysisChat from "./pages/DataAnalysisChat";
 import KnappilyCloneChat from "./pages/KnappilyCloneChat";
 import AutoPromptChat from "./pages/AutoPromptChat";
+import CodeAgentChat from "./pages/CodeAgentChat";
 import AgentDetail from "./pages/AgentDetail";
 import NotFound from "./pages/NotFound";
 
@@ -45,6 +46,7 @@ const App = () => (
             <Route path="/chat/multiagent-system" element={<MultiAgentChat />} />
             <Route path="/chat/data-analysis" element={<DataAnalysisChat />} />
             <Route path="/chat/auto-prompt" element={<AutoPromptChat />} />
+            <Route path="/chat/code-agent" element={<CodeAgentChat />} />
             <Route path="/qoffee" element={<AudioPlayerProvider><KnappilyProvider><KnappilyCloneChat /></KnappilyProvider></AudioPlayerProvider>} />
             <Route path="/qoffee/:articleId/:section" element={<AudioPlayerProvider><KnappilyProvider><KnappilyCloneChat /></KnappilyProvider></AudioPlayerProvider>} />
             <Route path="/agent/:agentId" element={<AgentDetail />} />
