@@ -43,6 +43,8 @@
     "@tanstack/react-query": "^5.81.5",
     "@tanstack/react-virtual": "^3.13.12",
     "@types/react-responsive": "^8.0.8",
+    "@webcontainer/api": "^1.6.1",
+    "@xterm/xterm": "^5.5.0",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
     "cmdk": "^1.0.0",

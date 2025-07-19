@@ -1,6 +1,7 @@
-import React, { useState } from 'react';
-import { Files, Eye } from 'lucide-react';
+import React, { useState, useEffect } from 'react';
+import { Files, Eye, Terminal } from 'lucide-react';
 import FileExplorer from './FileExplorer';
+import { WebContainerComponent, StreamedFile } from '../WebContainer';
 
 interface FileNode {
   name: string;
@@ -17,15 +18,48 @@ interface CodeTabsProps {
 const CodeTabs: React.FC<CodeTabsProps> = ({ files, previewUrl }) => {
   const [activeTab, setActiveTab] = useState<'files' | 'preview'>('files');
   const [selectedFile, setSelectedFile] = useState<FileNode | null>(null);
+  const [streamedFiles, setStreamedFiles] = useState<StreamedFile[]>([]);
+  const [webContainerPreviewUrl, setWebContainerPreviewUrl] = useState<string | null>(null);
 
   const handleFileSelect = (file: FileNode) => {
     setSelectedFile(file);
   };
 
+  // Convert FileNode structure to StreamedFile format for WebContainer
+  useEffect(() => {
+    const convertToStreamedFiles = (nodes: FileNode[], basePath = ''): StreamedFile[] => {
+      const result: StreamedFile[] = [];
+      
+      for (const node of nodes) {
+        if (node.type === 'file' && node.content) {
+          const filePath = basePath ? `${basePath}/${node.name}` : node.name;
+          result.push({
+            file_path: filePath,
+            content: node.content
+          });
+        } else if (node.type === 'folder' && node.children) {
+          const folderPath = basePath ? `${basePath}/${node.name}` : node.name;
+          result.push(...convertToStreamedFiles(node.children, folderPath));
+        }
+      }
+      
+      return result;
+    };
+
+    if (files.length > 0) {
+      const converted = convertToStreamedFiles(files);
+      setStreamedFiles(converted);
+    }
+  }, [files]);
+
+  const handleWebContainerPreviewUrl = (url: string | null) => {
+    setWebContainerPreviewUrl(url);
+  };
+
   return (
-    <div className="h-full flex flex-col bg-gray-900">
+    <div className="h-full bg-gray-900" style={{ display: 'grid', gridTemplateRows: 'auto 1fr auto', gridTemplateAreas: '"header" "main" "terminal"' }}>
       {/* Tab Headers */}
-      <div className="flex border-b border-gray-700 bg-gray-800">
+      <div className="flex border-b border-gray-700 bg-gray-800" style={{ gridArea: 'header' }}>
         <button
           onClick={() => setActiveTab('files')}
           className={`flex items-center px-4 py-3 text-sm font-medium transition-colors duration-200 ${
@@ -50,8 +84,8 @@ const CodeTabs: React.FC<CodeTabsProps> = ({ files, previewUrl }) => {
         </button>
       </div>
 
-      {/* Tab Content */}
-      <div className="flex-1 overflow-hidden">
+      {/* Main Content Area - Takes available space */}
+      <div className="overflow-hidden" style={{ gridArea: 'main', minHeight: 0 }}>
         {activeTab === 'files' ? (
           <div className="h-full flex">
             {/* File Explorer */}
@@ -84,7 +118,13 @@ const CodeTabs: React.FC<CodeTabsProps> = ({ files, previewUrl }) => {
           </div>
         ) : (
           <div className="h-full bg-white">
-            {previewUrl ? (
+            {webContainerPreviewUrl ? (
+              <iframe
+                src={webContainerPreviewUrl}
+                className="w-full h-full border-0"
+                title="Preview"
+              />
+            ) : previewUrl ? (
               <iframe
                 src={previewUrl}
                 className="w-full h-full border-0"
@@ -101,6 +141,35 @@ const CodeTabs: React.FC<CodeTabsProps> = ({ files, previewUrl }) => {
             )}
           </div>
         )}
+      </div>
+
+      {/* Terminal Panel - Always visible at bottom */}
+      <div 
+        className="border-t border-gray-700 bg-gray-800" 
+        style={{
+          gridArea: 'terminal',
+          height: '300px',
+          minHeight: '200px',
+          maxHeight: '400px'
+        }}
+      >
+        <div className="h-full flex flex-col">
+          <div className="flex items-center justify-between px-4 py-2 border-b border-gray-700">
+            <div className="flex items-center">
+              <Terminal className="w-4 h-4 mr-2 text-gray-400" />
+              <span className="text-sm font-medium text-gray-300">Terminal</span>
+            </div>
+          </div>
+          <div className="flex-1 overflow-hidden">
+            <WebContainerComponent
+              files={streamedFiles}
+              onPreviewUrlChange={handleWebContainerPreviewUrl}
+              autoInstall={true}
+              autoStart={true}
+              skipInitialization={true}
+            />
+          </div>
+        </div>
       </div>
     </div>
   );

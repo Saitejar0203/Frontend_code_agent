@@ -8,12 +8,49 @@ import { AuthGuard } from '../components/auth';
 import useMobileDetection from '../components/chat/mobile/useMobileDetection';
 import CodeChatInterface from '../components/code/CodeChatInterface';
 import CodeTabs from '../components/code/CodeTabs';
+import { webcontainerManager } from '../components/WebContainer';
 
 interface Message {
   id: string;
   content: string;
   sender: 'user' | 'agent';
   timestamp: Date;
+  type?: 'instruction' | 'file' | 'command' | 'complete' | 'error';
+}
+
+interface ProjectFile {
+  path: string;
+  content: string;
+  type: string;
+  description: string;
+}
+
+interface ProjectCommand {
+  cmd: string;
+  args: string[];
+  cwd: string;
+  priority: number;
+  description: string;
+  type: string;
+}
+
+interface StructuredProjectData {
+  files: ProjectFile[];
+  commands: ProjectCommand[];
+  instructions: string;
+}
+
+interface StreamResponse {
+  type: 'instruction' | 'file' | 'command' | 'complete' | 'error' | 'structured_data';
+  step?: number;
+  title?: string;
+  content: string;
+  file_path?: string;
+  command?: string;
+  args?: string[];
+  cwd?: string;
+  timestamp?: string;
+  structured_data?: StructuredProjectData;
 }
 
 interface FileNode {
@@ -52,7 +89,7 @@ const CodeAgentChat: React.FC = () => {
     console.log('New chat clicked');
   };
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!inputValue.trim()) return;
     
@@ -65,74 +102,284 @@ const CodeAgentChat: React.FC = () => {
     };
     
     setMessages(prev => [...prev, userMessage]);
+    const userInput = inputValue;
     setInputValue('');
     setIsInChatMode(true);
-    
-    // Simulate AI response
     setIsGenerating(true);
-    setTimeout(() => {
-      const agentMessage: Message = {
-        id: (Date.now() + 1).toString(),
-        content: `I'll help you build that! Let me create the project structure and files for you.`,
+    
+    // Initialize WebContainer when user sends first message
+    try {
+      if (!webcontainerManager.isWebContainerBooted()) {
+        console.log('Initializing WebContainer...');
+        await webcontainerManager.boot();
+        console.log('WebContainer initialized successfully');
+        
+        // Add a status message about WebContainer initialization
+        const initMessage: Message = {
+          id: `${Date.now()}-webcontainer-init`,
+          content: '🚀 WebContainer initialized and ready for development',
+          sender: 'agent',
+          timestamp: new Date(),
+          type: 'instruction'
+        };
+        setMessages(prev => [...prev, initMessage]);
+      }
+    } catch (error) {
+      console.error('Failed to initialize WebContainer:', error);
+      const errorMessage: Message = {
+        id: `${Date.now()}-init-error`,
+        content: `❌ Failed to initialize WebContainer: ${error}`,
         sender: 'agent',
-        timestamp: new Date()
+        timestamp: new Date(),
+        type: 'error'
       };
-      setMessages(prev => [...prev, agentMessage]);
-      setIsGenerating(false);
-      
-      // Simulate file creation
-      const sampleFiles: FileNode[] = [
-        {
-          name: 'src',
-          type: 'folder',
-          children: [
-            {
-              name: 'App.tsx',
-              type: 'file',
-              content: `import React from 'react';
-
-function App() {
-  return (
-    <div className="App">
-      <h1>Hello World!</h1>
-    </div>
-  );
-}
-
-export default App;`
-            },
-            {
-              name: 'index.tsx',
-              type: 'file',
-              content: `import React from 'react';
-import ReactDOM from 'react-dom/client';
-import App from './App';
-
-const root = ReactDOM.createRoot(
-  document.getElementById('root') as HTMLElement
-);
-root.render(<App />);`
-            }
-          ]
+      setMessages(prev => [...prev, errorMessage]);
+    }
+    
+    try {
+      // Call the structured streaming API
+      const codeAgentUrl = import.meta.env.VITE_CODE_AGENT_URL || import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000';
+      const response = await fetch(`${codeAgentUrl}/api/code-agent/generate-project-structured`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
         },
-        {
-          name: 'package.json',
-          type: 'file',
-          content: `{
-  "name": "my-app",
-  "version": "0.1.0",
-  "dependencies": {
-    "react": "^18.2.0",
-    "react-dom": "^18.2.0"
-  }
-}`
+        body: JSON.stringify({
+          project_name: extractProjectName(userInput),
+          description: userInput,
+          use_typescript: true,
+          styling_framework: 'tailwind',
+          include_routing: true,
+          include_state_management: false
+        })
+      });
+
+      if (!response.body) {
+        throw new Error('No response body');
+      }
+
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder();
+      const currentFiles: FileNode[] = [];
+      
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        
+        const chunk = decoder.decode(value);
+        const lines = chunk.split('\n');
+        
+        for (const line of lines) {
+          if (line.startsWith('data: ')) {
+            try {
+              const data: StreamResponse = JSON.parse(line.slice(6));
+              
+              // Add message to chat
+              const agentMessage: Message = {
+                id: `${Date.now()}-${Math.random()}`,
+                content: data.content,
+                sender: 'agent',
+                timestamp: new Date(),
+                type: data.type
+              };
+              setMessages(prev => [...prev, agentMessage]);
+              
+              // Handle different response types
+              if (data.type === 'structured_data' && data.structured_data) {
+                const { files, commands, instructions } = data.structured_data;
+                
+                // Process all files first (batch mounting)
+                console.log(`Processing ${files.length} files for batch mounting...`);
+                
+                // Add all files to the file structure
+                for (const file of files) {
+                  addFileToStructure(currentFiles, file.path, file.content);
+                }
+                setFiles([...currentFiles]);
+                
+                // Mount all files to WebContainer in batch
+                try {
+                  const fileMap: Record<string, string> = {};
+                  files.forEach(file => {
+                    fileMap[file.path] = file.content;
+                  });
+                  
+                  await webcontainerManager.mountFiles(fileMap);
+                  console.log('All files mounted successfully');
+                  
+                  // Add a status message about file mounting
+                  const fileMountMessage: Message = {
+                    id: `${Date.now()}-files-mounted`,
+                    content: `✅ Successfully mounted ${files.length} project files to WebContainer`,
+                    sender: 'agent',
+                    timestamp: new Date(),
+                    type: 'instruction'
+                  };
+                  setMessages(prev => [...prev, fileMountMessage]);
+                  
+                } catch (error) {
+                  console.error('Failed to mount files:', error);
+                  const errorMessage: Message = {
+                    id: `${Date.now()}-mount-error`,
+                    content: `❌ Failed to mount files: ${error}`,
+                    sender: 'agent',
+                    timestamp: new Date(),
+                    type: 'error'
+                  };
+                  setMessages(prev => [...prev, errorMessage]);
+                }
+                
+                // Execute commands in sequence (sorted by priority)
+                const sortedCommands = commands.sort((a, b) => a.priority - b.priority);
+                
+                for (const command of sortedCommands) {
+                  try {
+                    console.log(`Executing command: ${command.cmd} ${command.args.join(' ')}`);
+                    
+                    const commandStartMessage: Message = {
+                      id: `${Date.now()}-cmd-start-${command.priority}`,
+                      content: `🔧 Starting: ${command.description}\n\`\`\`bash\n$ ${command.cmd} ${command.args.join(' ')}\n\`\`\``,
+                      sender: 'agent',
+                      timestamp: new Date(),
+                      type: 'instruction'
+                    };
+                    setMessages(prev => [...prev, commandStartMessage]);
+                    
+                    // Execute command and capture result
+                    const result = await webcontainerManager.executeCommand(command.cmd, command.args, {
+                      cwd: command.cwd
+                    });
+                    
+                    // Show completion status
+                    const commandCompleteMessage: Message = {
+                      id: `${Date.now()}-cmd-complete-${command.priority}`,
+                      content: result.exitCode === 0 
+                        ? `✅ Completed: ${command.description}` 
+                        : `⚠️ Command finished with exit code ${result.exitCode}: ${command.description}`,
+                      sender: 'agent',
+                      timestamp: new Date(),
+                      type: result.exitCode === 0 ? 'instruction' : 'error'
+                    };
+                    setMessages(prev => [...prev, commandCompleteMessage]);
+                    
+                    console.log(`Command completed: ${command.cmd} (exit code: ${result.exitCode})`);
+                    
+                  } catch (error) {
+                    console.error(`Failed to execute command ${command.cmd}:`, error);
+                    const errorMessage: Message = {
+                      id: `${Date.now()}-cmd-error-${command.priority}`,
+                      content: `❌ Failed to execute: ${command.description}\n\nError: ${error}`,
+                      sender: 'agent',
+                      timestamp: new Date(),
+                      type: 'error'
+                    };
+                    setMessages(prev => [...prev, errorMessage]);
+                  }
+                }
+                
+                // Add terminal access message
+                const terminalMessage: Message = {
+                  id: `${Date.now()}-terminal-info`,
+                  content: `🖥️ **Terminal Access Available**\n\nYou can now view the terminal output by clicking on the "Terminal" tab below. All command execution logs and real-time output will be displayed there.\n\n**Next Steps:**\n1. Click the "Terminal" tab to see live command output\n2. Monitor the installation progress\n3. Check for any errors or warnings\n4. Once installation completes, your development server will start automatically`,
+                  sender: 'agent',
+                  timestamp: new Date(),
+                  type: 'instruction'
+                };
+                setMessages(prev => [...prev, terminalMessage]);
+                
+                // Add instructions as a final message
+                if (instructions) {
+                  const instructionsMessage: Message = {
+                    id: `${Date.now()}-instructions`,
+                    content: instructions,
+                    sender: 'agent',
+                    timestamp: new Date(),
+                    type: 'instruction'
+                  };
+                  setMessages(prev => [...prev, instructionsMessage]);
+                }
+                
+              } else if (data.type === 'file' && data.file_path) {
+                // Legacy file handling (for backward compatibility)
+                addFileToStructure(currentFiles, data.file_path, data.content);
+                setFiles([...currentFiles]);
+              } else if (data.type === 'command' && data.command && data.args) {
+                // Legacy command handling (for backward compatibility)
+                try {
+                  await webcontainerManager.executeCommand(data.command, data.args, {
+                    cwd: data.cwd || '/'
+                  });
+                } catch (error) {
+                  console.error('Failed to execute command:', error);
+                }
+              }
+              
+            } catch (error) {
+              console.error('Failed to parse SSE data:', error);
+            }
+          }
         }
-      ];
-      setFiles(sampleFiles);
-    }, 2000);
+      }
+      
+    } catch (error) {
+      console.error('Failed to generate project:', error);
+      const errorMessage: Message = {
+        id: Date.now().toString(),
+        content: 'Sorry, I encountered an error while generating your project. Please try again.',
+        sender: 'agent',
+        timestamp: new Date(),
+        type: 'error'
+      };
+      setMessages(prev => [...prev, errorMessage]);
+    } finally {
+      setIsGenerating(false);
+    }
   };
   
-  const handleChatMessage = (message: string) => {
+  const extractProjectName = (input: string): string => {
+    // Simple extraction logic - can be enhanced
+    const words = input.toLowerCase().split(' ');
+    const projectWords = words.filter(word => 
+      !['create', 'build', 'make', 'develop', 'a', 'an', 'the', 'app', 'application'].includes(word)
+    );
+    return projectWords.length > 0 ? projectWords.join('-') : 'my-react-app';
+  };
+  
+  const addFileToStructure = (files: FileNode[], filePath: string, content: string) => {
+    const parts = filePath.split('/');
+    let current = files;
+    
+    for (let i = 0; i < parts.length - 1; i++) {
+      const part = parts[i];
+      let folder = current.find(f => f.name === part && f.type === 'folder');
+      
+      if (!folder) {
+        folder = {
+          name: part,
+          type: 'folder',
+          children: []
+        };
+        current.push(folder);
+      }
+      
+      current = folder.children!;
+    }
+    
+    const fileName = parts[parts.length - 1];
+    const existingFile = current.find(f => f.name === fileName);
+    
+    if (existingFile) {
+      existingFile.content = content;
+    } else {
+      current.push({
+        name: fileName,
+        type: 'file',
+        content
+      });
+    }
+  };
+  
+  const handleChatMessage = async (message: string) => {
     const userMessage: Message = {
       id: Date.now().toString(),
       content: message,
@@ -141,9 +388,10 @@ root.render(<App />);`
     };
     
     setMessages(prev => [...prev, userMessage]);
-    
-    // Simulate AI response
     setIsGenerating(true);
+    
+    // For follow-up messages, we can implement more specific handling
+    // For now, provide a simple response
     setTimeout(() => {
       const agentMessage: Message = {
         id: (Date.now() + 1).toString(),
