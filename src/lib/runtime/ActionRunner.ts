@@ -1,16 +1,18 @@
-import { webcontainerManager } from '@/services/webcontainerService';
 import { 
   appendTerminalOutput, 
   setPreviewUrl, 
   addRunningCommand, 
   removeRunningCommand,
-  setWebContainerReady 
+  setWebContainerReady,
+  setFileTree,
+  setArtifactRunning,
+  setArtifactError,
+  type FileNode
 } from '@/lib/stores/workbenchStore';
-import { setFileTree, FileNode } from '@/lib/stores/filesStore';
-import { setArtifactRunning, setArtifactError } from '@/lib/stores/artifactStore';
 import { FileSystemTree, WebContainer } from '@webcontainer/api';
 import * as nodePath from 'node:path';
 import { createScopedLogger } from './logger';
+import { webcontainer } from '@/lib/webcontainer';
 
 export type ActionStatus = 'pending' | 'running' | 'complete' | 'aborted' | 'failed';
 
@@ -41,29 +43,27 @@ export type ActionStateUpdate =
   | (Omit<BaseActionUpdate, 'status'> & { status: 'failed'; error: string });
 
 class ActionRunner {
+  #webcontainer: Promise<WebContainer>;
   private currentExecutionPromise: Promise<void> = Promise.resolve();
   private actions: Map<string, ActionState> = new Map();
   private logger = createScopedLogger('ActionRunner');
-  private isInitialized = false;
-  private initializationPromise: Promise<void> | null = null;
 
-  constructor() {
+  constructor(webcontainerPromise: Promise<WebContainer>) {
+    this.#webcontainer = webcontainerPromise;
     this.setupWebContainerCallbacks();
   }
 
   private async setupWebContainerCallbacks() {
     try {
-      // Set up server ready callback
-      webcontainerManager.onServerReady((port, url) => {
+      // Wait for WebContainer to be ready and set up server ready callback
+      const container = await this.#webcontainer;
+      
+      container.on('server-ready', (port, url) => {
         this.logger.info(`Server ready at ${url}`);
         setPreviewUrl(url);
         appendTerminalOutput(`\n🚀 Server ready at ${url}\n`);
       });
       
-      // Set up terminal output callback
-      webcontainerManager.onTerminalOutput((output) => {
-        appendTerminalOutput(output);
-      });
     } catch (error) {
       this.logger.error('Failed to setup WebContainer callbacks:', error);
       appendTerminalOutput(`\n❌ Failed to setup WebContainer: ${error instanceof Error ? error.message : 'Unknown error'}\n`);
@@ -71,24 +71,11 @@ class ActionRunner {
   }
 
   public async initialize(): Promise<void> {
-    if (this.isInitialized) {
-      return;
-    }
-    
-    if (this.initializationPromise) {
-      return this.initializationPromise;
-    }
-    
-    this.initializationPromise = this.doInitialize();
-    return this.initializationPromise;
-  }
-  
-  private async doInitialize(): Promise<void> {
     try {
       this.logger.info('Initializing WebContainer...');
       appendTerminalOutput('🔧 Initializing WebContainer...\n');
       
-      const container = await webcontainerManager.boot();
+      const container = await this.#webcontainer;
       
       // Test WebContainer functionality
       await container.fs.mkdir('/tmp', { recursive: true });
@@ -96,7 +83,6 @@ class ActionRunner {
       await container.fs.readFile('/tmp/test.txt', 'utf-8');
       await container.fs.rm('/tmp/test.txt');
       
-      this.isInitialized = true;
       setWebContainerReady(true);
       this.logger.info('WebContainer initialized successfully');
       appendTerminalOutput('✅ WebContainer ready\n');
@@ -112,47 +98,52 @@ class ActionRunner {
     }
   }
 
-  public handleFile(filePath: string, content: string, artifactId?: string): string {
-    const actionId = `file_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+  /**
+   * Execute a clean BoltAction object
+   * This is the main entry point for action execution
+   */
+  public runAction(action: BoltAction, artifactId?: string): string {
+    const actionId = `${action.type}_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
     
     const actionData = {
       actionId,
-      action: {
-        type: 'file' as const,
-        filePath,
-        content
-      },
+      action,
       artifactId
     };
 
-    this.logger.info(`Creating file: ${filePath} (${content.length} chars)`);
-    appendTerminalOutput(`📄 Creating file: ${filePath} (${content.length} chars)\n`);
+    if (action.type === 'file' && action.filePath) {
+      this.logger.info(`Creating file: ${action.filePath} (${action.content.length} chars)`);
+      appendTerminalOutput(`📄 Creating file: ${action.filePath} (${action.content.length} chars)\n`);
+    } else if (action.type === 'shell') {
+      this.logger.info(`Executing command: ${action.content}`);
+      appendTerminalOutput(`⚡ Executing command: ${action.content}\n`);
+    }
 
     this.addAction(actionData);
-    this.runAction(actionData);
+    this.executeActionInternal(actionData);
     
     return actionId;
   }
 
+  /**
+   * @deprecated Use runAction(action: BoltAction, artifactId?: string) instead
+   */
+  public handleFile(filePath: string, content: string, artifactId?: string): string {
+    return this.runAction({
+      type: 'file',
+      filePath,
+      content
+    }, artifactId);
+  }
+
+  /**
+   * @deprecated Use runAction(action: BoltAction, artifactId?: string) instead
+   */
   public handleCommand(command: string, artifactId?: string): string {
-    const actionId = `shell_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
-    
-    const actionData = {
-      actionId,
-      action: {
-        type: 'shell' as const,
-        content: command
-      },
-      artifactId
-    };
-
-    this.logger.info(`Executing command: ${command}`);
-    appendTerminalOutput(`⚡ Executing command: ${command}\n`);
-
-    this.addAction(actionData);
-    this.runAction(actionData);
-    
-    return actionId;
+    return this.runAction({
+      type: 'shell',
+      content: command
+    }, artifactId);
   }
 
   public addAction(data: { actionId: string; action: BoltAction; artifactId?: string }) {
@@ -189,7 +180,7 @@ class ActionRunner {
     });
   }
 
-  public async runAction(data: { actionId: string; action: BoltAction; artifactId?: string }) {
+  private async executeActionInternal(data: { actionId: string; action: BoltAction; artifactId?: string }) {
     const { actionId, artifactId } = data;
     const action = this.actions.get(actionId);
 
@@ -277,7 +268,7 @@ class ActionRunner {
       return;
     }
 
-    const container = await webcontainerManager.boot();
+    const container = await this.#webcontainer;
     const command = action.content.trim();
     
     this.logger.info(`Executing shell command: ${command}`);
@@ -346,7 +337,7 @@ class ActionRunner {
       throw new Error('File action missing filePath');
     }
 
-    const container = await webcontainerManager.boot();
+    const container = await this.#webcontainer;
     const filePath = action.filePath;
     const content = action.content;
 
@@ -376,7 +367,7 @@ class ActionRunner {
 
   private async updateFileTree() {
     try {
-      const container = await webcontainerManager.boot();
+      const container = await this.#webcontainer;
       const fileSystemTree = await this.readFileSystemTree(container, '.');
       const fileNodes = this.convertToFileNodes(fileSystemTree);
       setFileTree(fileNodes);
@@ -464,4 +455,4 @@ class ActionRunner {
   }
 }
 
-export const actionRunner = new ActionRunner();
+export const actionRunner = new ActionRunner(webcontainer);

@@ -2,7 +2,7 @@ import { Terminal } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
 import '@xterm/xterm/css/xterm.css';
 import React, { useEffect, useRef, useState, useCallback } from 'react';
-import { webcontainerManager } from '../../services/webcontainerService';
+import { webcontainer } from '../../lib/webcontainer';
 import { setWebContainerReady } from '../../lib/stores/workbenchStore';
 
 export interface StreamedFile {
@@ -82,8 +82,8 @@ const WebContainerComponent: React.FC<WebContainerComponentProps> = ({
       updateStatus('booting');
       appendTerminalOutput('🚀 Initializing WebContainer...\n');
       
-      // Wait for WebContainer to boot
-      const container = await webcontainerManager.boot();
+      // Wait for WebContainer to be ready
+      const container = await webcontainer;
       
       // Set up server-ready listener
       container.on('server-ready', (port, url) => {
@@ -111,7 +111,7 @@ const WebContainerComponent: React.FC<WebContainerComponentProps> = ({
     if (!isInitialized || files.length === 0) return;
     
     try {
-      const container = await webcontainerManager.boot();
+      const container = await webcontainer;
       
       // Convert files to FileSystemTree format
       const fileSystemTree: any = {};

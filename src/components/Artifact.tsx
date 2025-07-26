@@ -1,18 +1,17 @@
 import React from 'react';
 import { useStore } from '@nanostores/react';
-import { artifactsStore, selectedArtifactId, selectArtifact, removeArtifact } from '../lib/stores/artifactStore';
-import type { ArtifactState } from '../lib/stores/artifactStore';
+import { workbenchStore, selectArtifact, removeArtifact } from '../lib/stores/workbenchStore';
+import type { ArtifactState } from '../lib/stores/workbenchStore';
 
 interface ArtifactProps {
   className?: string;
 }
 
 export function Artifact({ className = '' }: ArtifactProps) {
-  const artifacts = useStore(artifactsStore);
-  const selectedId = useStore(selectedArtifactId);
+  const { artifacts, selectedArtifactId } = useStore(workbenchStore);
   
   const artifactList = Object.values(artifacts);
-  const selectedArtifact = selectedId ? artifacts[selectedId] : null;
+  const selectedArtifact = selectedArtifactId ? artifacts[selectedArtifactId] : null;
 
   if (artifactList.length === 0) {
     return (
@@ -33,7 +32,7 @@ export function Artifact({ className = '' }: ArtifactProps) {
             <button
               key={artifact.id}
               className={`artifact-tab ${
-                selectedId === artifact.id ? 'active' : ''
+                selectedArtifactId === artifact.id ? 'active' : ''
               } ${artifact.isRunning ? 'running' : ''}`}
               onClick={() => selectArtifact(artifact.id)}
             >

@@ -2,7 +2,6 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { actionRunner, ActionRunner } from './ActionRunner';
 import { webcontainerManager } from '@/services/webcontainerService';
 import * as workbenchStore from '@/lib/stores/workbenchStore';
-import * as filesStore from '@/lib/stores/filesStore';
 
 // Mock the dependencies
 vi.mock('@/services/webcontainerService', () => ({
@@ -21,9 +20,6 @@ vi.mock('@/lib/stores/workbenchStore', () => ({
   addRunningCommand: vi.fn(),
   removeRunningCommand: vi.fn(),
   setWebContainerReady: vi.fn(),
-}));
-
-vi.mock('@/lib/stores/filesStore', () => ({
   setFileTree: vi.fn(),
 }));
 
@@ -99,7 +95,7 @@ describe('ActionRunner', () => {
       expect(allMountedFiles).toHaveProperty('package.json');
       expect(allMountedFiles['package.json'].file.contents).toBe('{"name": "test"}');
       
-      expect(filesStore.setFileTree).toHaveBeenCalled();
+      expect(workbenchStore.setFileTree).toHaveBeenCalled();
     });
   });
 

@@ -38,18 +38,16 @@ const CodeChatInterface: React.FC<CodeChatInterfaceProps> = ({
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    if (!input.trim() || isGenerating) return;
+    console.log('🎯 CodeChatInterface handleSubmit called with input:', input);
+    if (!input.trim() || isGenerating) {
+      console.log('❌ Input validation failed or already generating');
+      return;
+    }
     
-    const message: Message = {
-      id: Date.now().toString(),
-      content: input,
-      sender: 'user',
-      timestamp: new Date()
-    };
-    
-    addMessage(message);
+    console.log('📞 Calling onSendMessage with:', input);
     onSendMessage?.(input);
     setInput('');
+    console.log('✅ Input cleared');
   };
 
   const handleKeyPress = (e: React.KeyboardEvent) => {

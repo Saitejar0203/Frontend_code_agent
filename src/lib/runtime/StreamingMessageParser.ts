@@ -18,9 +18,8 @@ export interface ArtifactCallbackData extends BoltArtifactData {
 }
 
 export interface ActionCallbackData {
-  artifactId: string;
+  artifactId?: string;
   messageId: string;
-  actionId: string;
   action: BoltAction;
 }
 
@@ -64,9 +63,12 @@ export class StreamingMessageParser {
   }
 
   parse(messageId: string, input: string): string {
+    console.log('🔍 StreamingMessageParser.parse called with:', { messageId, inputLength: input.length, input: input.substring(0, 100) + (input.length > 100 ? '...' : '') });
+    
     let state = this.messages.get(messageId);
 
     if (!state) {
+      console.log('🆕 Creating new parser state for message:', messageId);
       state = {
         position: 0,
         insideAction: false,
@@ -84,6 +86,7 @@ export class StreamingMessageParser {
 
     const flushTextBuffer = () => {
       if (textBuffer.trim()) {
+        console.log('📤 StreamingMessageParser calling onText with:', textBuffer.trim().substring(0, 50) + (textBuffer.trim().length > 50 ? '...' : ''));
         this.callbacks.onText?.(textBuffer.trim());
         textBuffer = '';
       }
@@ -107,9 +110,12 @@ export class StreamingMessageParser {
 
             this.callbacks.onActionClose?.({
               messageId,
-              type: currentAction.type!,
-              filePath: currentAction.filePath,
-              content: currentAction.content.trim(),
+              artifactId: currentArtifact.id,
+              action: {
+                type: currentAction.type!,
+                filePath: currentAction.filePath,
+                content: currentAction.content.trim(),
+              },
             });
 
             state.insideAction = false;
@@ -139,8 +145,12 @@ export class StreamingMessageParser {
 
               this.callbacks.onActionOpen?.({
                 messageId,
-                type: state.currentAction.type!,
-                filePath: state.currentAction.filePath,
+                artifactId: currentArtifact.id,
+                action: {
+                  type: state.currentAction.type!,
+                  filePath: state.currentAction.filePath,
+                  content: '', // Content will be filled when action closes
+                },
               });
 
               i = actionEndIndex + 1;
@@ -222,15 +232,20 @@ export class StreamingMessageParser {
 
               this.callbacks.onActionOpen?.({
                 messageId,
-                type: action.type!,
-                filePath: action.filePath,
+                action: {
+                  type: action.type!,
+                  filePath: action.filePath,
+                  content: actionContent.trim(),
+                },
               });
 
               this.callbacks.onActionClose?.({
                 messageId,
-                type: action.type!,
-                filePath: action.filePath,
-                content: actionContent.trim(),
+                action: {
+                  type: action.type!,
+                  filePath: action.filePath,
+                  content: actionContent.trim(),
+                },
               });
 
               i = actionCloseIndex + ARTIFACT_ACTION_TAG_CLOSE.length;
@@ -241,7 +256,9 @@ export class StreamingMessageParser {
         } else {
           // No more tags, process remaining text
           const remainingText = input.slice(i);
+          console.log('📝 Processing remaining text:', remainingText.substring(0, 100) + (remainingText.length > 100 ? '...' : ''));
           if (remainingText.trim()) {
+            console.log('📤 StreamingMessageParser calling onText with remaining text:', remainingText.trim().substring(0, 50) + (remainingText.trim().length > 50 ? '...' : ''));
             this.callbacks.onText?.(remainingText.trim());
           }
           i = input.length;
@@ -250,6 +267,7 @@ export class StreamingMessageParser {
     }
 
     state.position = i;
+    console.log('🏁 StreamingMessageParser.parse completed. Output length:', output.length, 'Final position:', i);
     return output;
   }
   reset() {

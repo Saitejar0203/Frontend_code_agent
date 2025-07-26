@@ -9,61 +9,13 @@ import useMobileDetection from '../components/chat/mobile/useMobileDetection';
 import CodeChatInterface from '../components/code/CodeChatInterface';
 import CodeTabs from '../components/code/CodeTabs';
 
-import { actionRunner } from '@/lib/runtime/ActionRunner';
 import { useStore } from '@nanostores/react';
-import { chatStore, addMessage, clearMessages, setGenerating, updateMessage, type Message } from '@/lib/stores/chatStore';
-import { filesStore, setFileTree } from '@/lib/stores/filesStore';
-import { workbenchStore } from '@/lib/stores/workbenchStore';
-import { artifactPanelVisible, clearArtifacts } from '@/lib/stores/artifactStore';
-import { StreamingMessageParser } from '@/lib/runtime/StreamingMessageParser';
-import type { ParserCallbacks } from '@/lib/runtime/StreamingMessageParser';
+import { chatStore, clearMessages, setGenerating, type Message } from '@/lib/stores/chatStore';
+import { workbenchStore, setFileTree, clearArtifacts } from '@/lib/stores/workbenchStore';
+import { sendChatMessage } from '@/services/codeAgentService';
 import Artifact from '@/components/Artifact';
 
-// Remove local Message interface - use the one from chatStore
-
-interface ProjectFile {
-  path: string;
-  content: string;
-  type: string;
-  description: string;
-}
-
-interface ProjectCommand {
-  cmd: string;
-  args: string[];
-  cwd: string;
-  priority: number;
-  description: string;
-  type: string;
-}
-
-interface StructuredProjectData {
-  files: ProjectFile[];
-  commands: ProjectCommand[];
-  instructions: string;
-}
-
-interface StreamResponse {
-  type: 'instruction' | 'file' | 'command' | 'complete' | 'error' | 'structured_data';
-  step?: number;
-  title?: string;
-  content: string;
-  file_path?: string;
-  command?: string;
-  args?: string[];
-  cwd?: string;
-  timestamp?: string;
-  structured_data?: StructuredProjectData;
-}
-
-interface FileNode {
-  name: string;
-  type: 'file' | 'folder';
-  children?: FileNode[];
-  content?: string;
-  path?: string;
-  isExpanded?: boolean;
-}
+// Interfaces moved to service layer - keeping component clean
 
 const CodeAgentChat: React.FC = () => {
   const [inputValue, setInputValue] = useState('');
@@ -72,9 +24,7 @@ const CodeAgentChat: React.FC = () => {
   
   // Use stores for state management
   const { messages, isGenerating } = useStore(chatStore);
-  const { fileTree } = useStore(filesStore);
-  const { previewUrl } = useStore(workbenchStore);
-  const isArtifactPanelVisible = useStore(artifactPanelVisible);
+  const { fileTree, previewUrl, artifactPanelVisible: isArtifactPanelVisible } = useStore(workbenchStore);
 
   // Testing code removed - cleanup complete
 
@@ -106,197 +56,15 @@ const CodeAgentChat: React.FC = () => {
     e.preventDefault();
     if (!inputValue.trim()) return;
     
-    // Add user message
-    const userMessage: Message = {
-      id: Date.now().toString(),
-      content: inputValue,
-      sender: 'user',
-      timestamp: new Date()
-    };
-    
-    addMessage(userMessage);
     const userInput = inputValue;
     setInputValue('');
     setIsInChatMode(true);
-    setGenerating(true);
     
-    // Initialize ActionRunner when user sends first message
-    try {
-      await actionRunner.initialize();
-      console.log('ActionRunner initialized successfully');
-    } catch (error) {
-      console.error('Failed to initialize ActionRunner:', error);
-      const errorMessage: Message = {
-        id: `${Date.now()}-init-error`,
-        content: `❌ Failed to initialize ActionRunner: ${error}`,
-        sender: 'agent',
-        timestamp: new Date(),
-        type: 'error'
-      };
-      addMessage(errorMessage);
-    }
-    
-    try {
-      // Call the Gemini API streaming chat endpoint
-      const codeAgentUrl = import.meta.env.VITE_CODE_AGENT_URL || import.meta.env.VITE_API_BASE_URL || 'http://localhost:8002';
-      const response = await fetch(`${codeAgentUrl}/api/v1/chat`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Accept': 'text/plain',
-        },
-        body: JSON.stringify({
-          message: userInput,
-          conversation_history: [],
-          stream: true
-        })
-      });
-
-      if (!response.body) {
-        throw new Error('No response body');
-      }
-
-      const reader = response.body.getReader();
-      const decoder = new TextDecoder();
-      
-      // Set up parser callbacks for artifact and action handling
-      const parserCallbacks: ParserCallbacks = {
-        onArtifactOpen: ({ messageId, id, title }) => {
-          console.log(`Artifact opened: ${id} - ${title}`);
-          // Artifact store will handle this automatically
-        },
-        onArtifactClose: ({ messageId, id, title }) => {
-          console.log(`Artifact closed: ${id} - ${title}`);
-        },
-        onActionOpen: ({ artifactId, messageId, actionId, action }) => {
-          console.log(`Action opened: ${action.type} in artifact ${artifactId}`);
-          // Execute the action
-          if (action.type === 'file' && action.filePath) {
-            actionRunner.handleFile(action.filePath, action.content || '', artifactId);
-          } else if (action.type === 'shell') {
-            actionRunner.handleCommand(action.content || '', artifactId);
-          }
-        },
-        onActionClose: ({ artifactId, messageId, actionId, action }) => {
-          console.log(`Action closed: ${action.type} in artifact ${artifactId}`);
-        }
-      };
-      
-      const messageParser = new StreamingMessageParser({ callbacks: parserCallbacks });
-      let accumulatedText = '';
-      let buffer = '';
-      const messageId = `msg-${Date.now()}`;
-      
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        
-        const chunk = decoder.decode(value);
-        buffer += chunk;
-        
-        // Process complete SSE messages
-        const lines = buffer.split('\n');
-        buffer = lines.pop() || ''; // Keep incomplete line in buffer
-        
-        for (const line of lines) {
-          if (line.startsWith('data: ')) {
-            try {
-              const jsonData = JSON.parse(line.slice(6)); // Remove 'data: ' prefix
-              
-              // Handle completion signal
-              if (jsonData.done) {
-                break;
-              }
-              
-              if (jsonData.chunk) {
-                // Parse the Bolt-style content within the SSE message
-                const parsedContent = messageParser.parse(messageId, jsonData.chunk);
-                
-                if (parsedContent && parsedContent.trim()) {
-                  // Accumulate only the filtered text content (without artifacts/actions)
-                  accumulatedText += parsedContent;
-                  
-                  // Create or update the current agent message
-                  const currentMessages = chatStore.get().messages;
-                  const lastMessage = currentMessages[currentMessages.length - 1];
-                  
-                  if (lastMessage && lastMessage.sender === 'agent' && lastMessage.isStreaming) {
-                    // Update existing streaming message
-                    updateMessage(lastMessage.id, {
-                      ...lastMessage,
-                      content: accumulatedText
-                    });
-                  } else {
-                    // Create new streaming message
-                    const agentMessage: Message = {
-                      id: `${Date.now()}-${Math.random()}`,
-                      content: accumulatedText,
-                      sender: 'agent',
-                      timestamp: new Date(),
-                      type: 'instruction',
-                      isStreaming: true
-                    };
-                    addMessage(agentMessage);
-                  }
-                }
-              }
-              
-              // Handle errors
-              if (jsonData.error) {
-                console.error('Gemini API error:', jsonData.error);
-                throw new Error(jsonData.error);
-              }
-            } catch (error) {
-              console.error('Failed to parse SSE data:', error, 'Line:', line);
-            }
-          }
-        }
-      }
-      
-      // Process any remaining buffer content
-      if (buffer.trim()) {
-        const parsedContent = messageParser.parse(messageId, buffer);
-        if (parsedContent) {
-          accumulatedText += parsedContent;
-        }
-      }
-      
-      // Mark the final message as complete
-      const currentMessages = chatStore.get().messages;
-      const lastMessage = currentMessages[currentMessages.length - 1];
-      if (lastMessage && lastMessage.sender === 'agent' && lastMessage.isStreaming) {
-        updateMessage(lastMessage.id, {
-          ...lastMessage,
-          content: accumulatedText,
-          isStreaming: false
-        });
-      }
-      
-    } catch (error) {
-      console.error('Failed to generate project:', error);
-      const errorMessage: Message = {
-        id: Date.now().toString(),
-        content: 'Sorry, I encountered an error while generating your project. Please try again.',
-        sender: 'agent',
-        timestamp: new Date(),
-        type: 'text'
-      };
-      addMessage(errorMessage);
-    } finally {
-      setGenerating(false);
-    }
+    // Use the service function to handle all streaming logic
+    await sendChatMessage(userInput);
   };
   
-  const extractProjectName = (input: string): string => {
-    // Simple extraction logic - can be enhanced
-    const words = input.toLowerCase().split(' ');
-    const projectWords = words.filter(word => 
-      !['create', 'build', 'make', 'develop', 'a', 'an', 'the', 'app', 'application'].includes(word)
-    );
-    return projectWords.length > 0 ? projectWords.join('-') : 'my-react-app';
-  };
-  
-  // File operations are now handled directly by ActionRunner
+  // All streaming and parsing logic moved to codeAgentService.ts
   
 
 
@@ -432,7 +200,7 @@ const CodeAgentChat: React.FC = () => {
           <div className="flex-1 flex overflow-hidden">
             {/* Chat Interface */}
             <div className={`${isArtifactPanelVisible ? 'w-1/4' : 'w-1/3'} flex-shrink-0`}>
-              <CodeChatInterface />
+              <CodeChatInterface onSendMessage={sendChatMessage} />
             </div>
             
             {/* Artifact Panel (when visible) */}

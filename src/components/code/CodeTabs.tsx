@@ -3,14 +3,12 @@ import { useStore } from '@nanostores/react';
 import { Files, Eye, Terminal } from 'lucide-react';
 import { FileExplorer } from './FileExplorer';
 import { WebContainerComponent, StreamedFile } from '../WebContainer';
-import { filesStore, type FileNode } from '@/lib/stores/filesStore';
-import { workbenchStore } from '@/lib/stores/workbenchStore';
+import { workbenchStore, type FileNode } from '@/lib/stores/workbenchStore';
 
 interface CodeTabsProps {}
 
 const CodeTabs: React.FC<CodeTabsProps> = () => {
-  const { files, selectedFile } = useStore(filesStore);
-  const { previewUrl } = useStore(workbenchStore);
+  const { fileTree: files, selectedFile, previewUrl } = useStore(workbenchStore);
   const [activeTab, setActiveTab] = useState<'files' | 'preview'>('files');
   const [streamedFiles, setStreamedFiles] = useState<StreamedFile[]>([]);
   const [webContainerPreviewUrl, setWebContainerPreviewUrl] = useState<string | null>(null);

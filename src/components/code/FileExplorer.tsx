@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { useStore } from '@nanostores/react';
 import { ChevronRight, ChevronDown, File, Folder, FolderOpen } from 'lucide-react';
-import { filesStore, toggleFolder, setSelectedFile, type FileNode } from '@/lib/stores/filesStore';
+import { workbenchStore, toggleFolder, setSelectedFile, type FileNode } from '@/lib/stores/workbenchStore';
 
 interface FileExplorerProps {
   className?: string;
@@ -9,7 +9,7 @@ interface FileExplorerProps {
 }
 
 const FileExplorer: React.FC<FileExplorerProps> = ({ className, onFileSelect }) => {
-  const { files, selectedFile } = useStore(filesStore);
+  const { fileTree: files, selectedFile } = useStore(workbenchStore);
 
   const handleFileClick = (file: FileNode) => {
     if (file.type === 'file') {
