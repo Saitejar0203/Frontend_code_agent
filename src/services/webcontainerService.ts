@@ -13,7 +13,11 @@ export interface WebContainerService {
   previewUrl: string | null;
 }
 
+type TerminalOutputCallback = (data: string) => void;
+type ServerReadyCallback = (url: string, port: number) => void;
+
 class WebContainerManager {
+  private static instance: WebContainerManager;
   private webcontainer: WebContainer | null = null;
   private terminal: Terminal | null = null;
   private isBooted = false;
@@ -21,8 +25,16 @@ class WebContainerManager {
   private bootPromise: Promise<WebContainer> | null = null;
   private previewUrl: string | null = null;
   private onPreviewUrlChange: ((url: string | null) => void) | null = null;
-  private onTerminalOutput: ((data: string) => void) | null = null;
+  private terminalCallbacks: TerminalOutputCallback[] = [];
+  private serverCallbacks: ServerReadyCallback[] = [];
   private refCount = 0;
+
+  public static getInstance(): WebContainerManager {
+    if (!WebContainerManager.instance) {
+      WebContainerManager.instance = new WebContainerManager();
+    }
+    return WebContainerManager.instance;
+  }
 
   async boot(): Promise<WebContainer> {
     this.refCount++;
@@ -37,12 +49,9 @@ class WebContainerManager {
       return this.bootPromise;
     }
 
-    // Check for cross-origin isolation
+    // Check for cross-origin isolation (warn but don't fail)
     if (!this.isCrossOriginIsolated()) {
-      const error = new Error('Cross-origin isolation is required for WebContainer. Please ensure COOP and COEP headers are set correctly.');
-      console.error('WebContainer boot failed:', error.message);
-      this.refCount--;
-      throw error;
+      console.warn('Cross-origin isolation not detected. WebContainer may have limited functionality.');
     }
 
     // Start the boot process
@@ -66,17 +75,20 @@ class WebContainerManager {
       // Clean up any existing instance
       await this.forceDispose();
       
-      this.webcontainer = await WebContainer.boot({
-        coep: 'require-corp'
-      });
+      // Boot WebContainer with proper configuration
+      this.webcontainer = await WebContainer.boot();
       this.isBooted = true;
       
+      // Enhanced server detection
+      this.setupServerDetection();
+
       // Listen for server-ready events
       this.webcontainer.on('server-ready', (port, url) => {
         this.previewUrl = url;
         if (this.onPreviewUrlChange) {
           this.onPreviewUrlChange(url);
         }
+        this.serverCallbacks.forEach(callback => callback(url, port));
       });
 
       return this.webcontainer;
@@ -130,6 +142,22 @@ class WebContainerManager {
     await this.webcontainer.mount(fileSystemTree);
   }
 
+  // Enhanced server ready detection
+  private setupServerDetection(): void {
+    if (!this.webcontainer) return;
+    
+    this.webcontainer.on('server-ready', (port, url) => {
+      this.serverCallbacks.forEach(callback => callback(url, port));
+    });
+    
+    // Also listen for port changes
+    this.webcontainer.on('port', (port, type, url) => {
+      if (type === 'open' && url) {
+        this.serverCallbacks.forEach(callback => callback(url, port));
+      }
+    });
+  }
+
   async mountSingleFile(filePath: string, content: string): Promise<void> {
     if (!this.webcontainer) {
       throw new Error('WebContainer not booted');
@@ -150,7 +178,37 @@ class WebContainerManager {
     await this.webcontainer.fs.writeFile(filePath, content);
   }
 
-  async executeCommand(
+  // Enhanced executeCommand method with better error handling
+  public async executeCommand(command: string, args: string[] = []): Promise<number> {
+    if (!this.webcontainer) {
+      throw new Error('WebContainer not booted');
+    }
+    
+    try {
+      const process = await this.webcontainer.spawn(command, args);
+      
+      // Stream output to callbacks
+      process.output.pipeTo(
+        new WritableStream({
+          write: (data) => {
+            this.terminalCallbacks.forEach(callback => callback(data));
+          },
+        })
+      );
+      
+      // Wait for process to complete and return exit code
+      const exitCode = await process.exit;
+      return exitCode;
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+      this.terminalCallbacks.forEach(callback => 
+        callback(`Error executing command: ${errorMessage}\n`)
+      );
+      throw error;
+    }
+  }
+
+  async executeCommandWithOutput(
     command: string, 
     args: string[] = [], 
     options: { cwd?: string; onOutput?: (data: string) => void } = {}
@@ -166,9 +224,7 @@ class WebContainerManager {
     if (this.terminal) {
       this.terminal.write(`\r\n\x1b[32m${commandLine}\x1b[0m`);
     }
-    if (this.onTerminalOutput) {
-      this.onTerminalOutput(commandLine);
-    }
+    this.terminalCallbacks.forEach(callback => callback(commandLine));
     if (options.onOutput) {
       options.onOutput(commandLine);
     }
@@ -189,9 +245,7 @@ class WebContainerManager {
           }
           
           // Call callbacks for real-time updates
-          if (this.onTerminalOutput) {
-            this.onTerminalOutput(data);
-          }
+          this.terminalCallbacks.forEach(callback => callback(data));
           
           if (options.onOutput) {
             options.onOutput(data);
@@ -210,9 +264,7 @@ class WebContainerManager {
     if (this.terminal) {
       this.terminal.write(statusLine);
     }
-    if (this.onTerminalOutput) {
-      this.onTerminalOutput(statusLine);
-    }
+    this.terminalCallbacks.forEach(callback => callback(statusLine));
     if (options.onOutput) {
       options.onOutput(statusLine);
     }
@@ -221,11 +273,11 @@ class WebContainerManager {
   }
 
   async installDependencies(): Promise<{ exitCode: number; output: string }> {
-    return this.executeCommand('npm', ['install']);
+    return this.executeCommandWithOutput('npm', ['install']);
   }
 
   async startDevServer(): Promise<{ exitCode: number; output: string }> {
-    return this.executeCommand('npm', ['start']);
+    return this.executeCommandWithOutput('npm', ['start']);
   }
 
   initializeTerminal(terminalElement: HTMLElement): Terminal {
@@ -243,12 +295,24 @@ class WebContainerManager {
     return this.terminal;
   }
 
+  public onTerminalOutput(callback: TerminalOutputCallback): void {
+    this.terminalCallbacks.push(callback);
+  }
+
+  public onServerReady(callback: ServerReadyCallback): void {
+    this.serverCallbacks.push(callback);
+  }
+
+  public isReady(): boolean {
+    return this.isBooted && this.webcontainer !== null;
+  }
+
   onPreviewUrlChanged(callback: (url: string | null) => void): void {
     this.onPreviewUrlChange = callback;
   }
 
   onTerminalData(callback: (data: string) => void): void {
-    this.onTerminalOutput = callback;
+    this.terminalCallbacks.push(callback);
   }
 
   getPreviewUrl(): string | null {
@@ -299,19 +363,12 @@ class WebContainerManager {
     this.bootPromise = null;
     this.previewUrl = null;
     this.onPreviewUrlChange = null;
-    this.onTerminalOutput = null;
+    this.terminalCallbacks = [];
+    this.serverCallbacks = [];
     this.refCount = 0;
   }
 }
 
-// Global singleton instance
-let globalWebContainerManager: WebContainerManager | null = null;
-
 // Export singleton instance
-export const webcontainerManager = (() => {
-  if (!globalWebContainerManager) {
-    globalWebContainerManager = new WebContainerManager();
-  }
-  return globalWebContainerManager;
-})();
+export const webcontainerManager = WebContainerManager.getInstance();
 export default webcontainerManager;

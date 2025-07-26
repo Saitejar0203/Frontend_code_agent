@@ -1,54 +1,37 @@
 import React, { useState } from 'react';
+import { useStore } from '@nanostores/react';
 import { ChevronRight, ChevronDown, File, Folder, FolderOpen } from 'lucide-react';
-
-interface FileNode {
-  name: string;
-  type: 'file' | 'folder';
-  children?: FileNode[];
-  content?: string;
-}
+import { filesStore, toggleFolder, setSelectedFile, type FileNode } from '@/lib/stores/filesStore';
 
 interface FileExplorerProps {
-  files: FileNode[];
+  className?: string;
   onFileSelect?: (file: FileNode) => void;
 }
 
-const FileExplorer: React.FC<FileExplorerProps> = ({ files, onFileSelect }) => {
-  const [expandedFolders, setExpandedFolders] = useState<Set<string>>(new Set());
-  const [selectedFile, setSelectedFile] = useState<string | null>(null);
+const FileExplorer: React.FC<FileExplorerProps> = ({ className, onFileSelect }) => {
+  const { files, selectedFile } = useStore(filesStore);
 
-  const toggleFolder = (path: string) => {
-    const newExpanded = new Set(expandedFolders);
-    if (newExpanded.has(path)) {
-      newExpanded.delete(path);
-    } else {
-      newExpanded.add(path);
-    }
-    setExpandedFolders(newExpanded);
-  };
-
-  const handleFileClick = (file: FileNode, path: string) => {
+  const handleFileClick = (file: FileNode) => {
     if (file.type === 'file') {
-      setSelectedFile(path);
+      setSelectedFile(file.path);
       onFileSelect?.(file);
     } else {
-      toggleFolder(path);
+      toggleFolder(file.path);
     }
   };
 
-  const renderFileNode = (node: FileNode, path: string = '', depth: number = 0) => {
-    const currentPath = path ? `${path}/${node.name}` : node.name;
-    const isExpanded = expandedFolders.has(currentPath);
-    const isSelected = selectedFile === currentPath;
+  const renderFileNode = (node: FileNode, depth: number = 0) => {
+    const isExpanded = node.isExpanded || false;
+    const isSelected = selectedFile === node.path;
 
     return (
-      <div key={currentPath}>
+      <div key={node.path}>
         <div
           className={`flex items-center py-1 px-2 cursor-pointer hover:bg-gray-700 transition-colors duration-150 ${
             isSelected ? 'bg-blue-600 text-white' : 'text-gray-300'
           }`}
           style={{ paddingLeft: `${depth * 16 + 8}px` }}
-          onClick={() => handleFileClick(node, currentPath)}
+          onClick={() => handleFileClick(node)}
         >
           {node.type === 'folder' && (
             <span className="mr-1 text-gray-400">
@@ -75,7 +58,7 @@ const FileExplorer: React.FC<FileExplorerProps> = ({ files, onFileSelect }) => {
         {node.type === 'folder' && isExpanded && node.children && (
           <div>
             {node.children.map((child) =>
-              renderFileNode(child, currentPath, depth + 1)
+              renderFileNode(child, depth + 1)
             )}
           </div>
         )}
@@ -84,15 +67,17 @@ const FileExplorer: React.FC<FileExplorerProps> = ({ files, onFileSelect }) => {
   };
 
   return (
-    <div className="h-full bg-gray-800 text-gray-300 overflow-y-auto">
-      <div className="p-3 border-b border-gray-700">
-        <h3 className="text-sm font-semibold text-gray-200">Explorer</h3>
+    <div className={`bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-700 rounded-lg shadow-sm h-full ${className || ''}`}>
+      <div className="border-b border-gray-200 dark:border-gray-700 p-3">
+        <h3 className="text-sm font-medium text-gray-700 dark:text-gray-300">Files</h3>
       </div>
       <div className="p-2">
-        {files.map((file) => renderFileNode(file))}
+        {files && files.length > 0 ? files.map((file) => renderFileNode(file)) : (
+          <div className="text-gray-500 text-sm p-2">No files to display</div>
+        )}
       </div>
     </div>
   );
 };
 
-export default FileExplorer;
+export { FileExplorer };

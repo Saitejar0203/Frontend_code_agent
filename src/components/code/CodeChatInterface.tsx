@@ -1,27 +1,31 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { Send, User, Bot } from 'lucide-react';
+import { useStore } from '@nanostores/react';
+import { Send, User, Bot, StopCircle } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
-
-interface Message {
-  id: string;
-  content: string;
-  sender: 'user' | 'agent';
-  timestamp: Date;
-}
+import { 
+  chatStore, 
+  addMessage, 
+  updateLastMessage, 
+  setGenerating, 
+  setError,
+  clearMessages,
+  type Message 
+} from '@/lib/stores/chatStore';
+import { AssistantMessage } from '../chat/AssistantMessage';
+import { UserMessage } from '../chat/UserMessage';
 
 interface CodeChatInterfaceProps {
-  onSendMessage: (message: string) => void;
-  messages: Message[];
-  isGenerating?: boolean;
+  onSendMessage?: (message: string) => void;
+  className?: string;
 }
 
 const CodeChatInterface: React.FC<CodeChatInterfaceProps> = ({
   onSendMessage,
-  messages,
-  isGenerating = false
+  className
 }) => {
-  const [inputValue, setInputValue] = useState('');
+  const { messages, isGenerating, error } = useStore(chatStore);
+  const [input, setInput] = useState('');
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
   const scrollToBottom = () => {
@@ -34,10 +38,18 @@ const CodeChatInterface: React.FC<CodeChatInterfaceProps> = ({
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    if (!inputValue.trim() || isGenerating) return;
+    if (!input.trim() || isGenerating) return;
     
-    onSendMessage(inputValue);
-    setInputValue('');
+    const message: Message = {
+      id: Date.now().toString(),
+      content: input,
+      sender: 'user',
+      timestamp: new Date()
+    };
+    
+    addMessage(message);
+    onSendMessage?.(input);
+    setInput('');
   };
 
   const handleKeyPress = (e: React.KeyboardEvent) => {
@@ -47,91 +59,122 @@ const CodeChatInterface: React.FC<CodeChatInterfaceProps> = ({
     }
   };
 
+  const handleStop = () => {
+    setGenerating(false);
+    // TODO: Implement actual stop functionality
+  };
+
+  const handleClear = () => {
+    clearMessages();
+    setError(null);
+  };
+
   return (
-    <div className="h-full flex flex-col bg-white border-r border-gray-200">
+    <div className={`h-full flex flex-col bg-white dark:bg-gray-900 ${className}`}>
       {/* Chat Header */}
-      <div className="px-4 py-3 border-b border-gray-200 bg-gray-50">
-        <h3 className="text-lg font-semibold text-gray-800">Code Agent</h3>
-        <p className="text-sm text-gray-600">Powered by Gemini 2.5 Flash</p>
+      <div className="px-4 py-3 border-b border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800">
+        <div className="flex items-center justify-between">
+          <div>
+            <h3 className="text-lg font-semibold text-gray-800 dark:text-white">Code Agent</h3>
+            <p className="text-sm text-gray-600 dark:text-gray-400">Powered by Gemini 2.5 Flash</p>
+          </div>
+          <button
+            onClick={handleClear}
+            className="px-3 py-1 text-xs bg-gray-500 text-white rounded hover:bg-gray-600 transition-colors"
+          >
+            Clear
+          </button>
+        </div>
       </div>
 
       {/* Messages Area */}
       <div className="flex-1 overflow-y-auto p-4 space-y-4">
         {messages.length === 0 ? (
-          <div className="text-center text-gray-500 mt-8">
+          <div className="text-center text-gray-500 dark:text-gray-400 mt-8">
             <Bot className="w-12 h-12 mx-auto mb-4 opacity-50" />
             <p>Start a conversation to begin coding!</p>
             <p className="text-sm mt-2">Describe what you want to build and I'll help you create it.</p>
           </div>
         ) : (
-          messages.map((message) => (
-            <div
-              key={message.id}
-              className={`flex ${message.sender === 'user' ? 'justify-end' : 'justify-start'}`}
-            >
+          messages.map((message, index) => {
+            const isUserMessage = message.sender === 'user';
+            const isFirst = index === 0;
+            const isLast = index === messages.length - 1;
+            
+            return (
               <div
-                className={`max-w-[80%] rounded-lg px-4 py-2 ${
-                  message.sender === 'user'
-                    ? 'bg-blue-600 text-white'
-                    : 'bg-gray-100 text-gray-800'
-                }`}
+                key={message.id}
+                className={`flex gap-4 p-6 w-full rounded-lg ${
+                  isUserMessage || !isGenerating || (isGenerating && !isLast)
+                    ? 'bg-gray-50 dark:bg-gray-800/50'
+                    : 'bg-gradient-to-b from-gray-50 dark:from-gray-800/50 from-30% to-transparent'
+                } ${!isFirst ? 'mt-4' : ''}`}
               >
-                <div className="flex items-start space-x-2">
-                  {message.sender === 'agent' && (
-                    <Bot className="w-4 h-4 mt-1 flex-shrink-0" />
+                {isUserMessage ? (
+                  <div className="flex items-center justify-center w-8 h-8 overflow-hidden bg-blue-600 text-white rounded-full shrink-0 self-start">
+                    <User className="w-4 h-4" />
+                  </div>
+                ) : (
+                  <div className="flex items-center justify-center w-8 h-8 overflow-hidden bg-gray-600 text-white rounded-full shrink-0 self-start">
+                    <Bot className="w-4 h-4" />
+                  </div>
+                )}
+                <div className="grid grid-cols-1 w-full min-w-0">
+                  {isUserMessage ? (
+                    <UserMessage content={message.content} />
+                  ) : (
+                    <AssistantMessage 
+                      content={message.content} 
+                      isStreaming={message.isStreaming || false}
+                    />
                   )}
-                  {message.sender === 'user' && (
-                    <User className="w-4 h-4 mt-1 flex-shrink-0" />
-                  )}
-                  <div className="flex-1">
-                    <p className="text-sm whitespace-pre-wrap">{message.content}</p>
-                    <p className={`text-xs mt-1 opacity-70`}>
-                      {message.timestamp.toLocaleTimeString()}
-                    </p>
+                  <div className="text-xs text-gray-500 dark:text-gray-400 mt-2">
+                    {message.timestamp.toLocaleTimeString()}
                   </div>
                 </div>
               </div>
-            </div>
-          ))
+            );
+          })
         )}
-        {isGenerating && (
-          <div className="flex justify-start">
-            <div className="bg-gray-100 text-gray-800 rounded-lg px-4 py-2 max-w-[80%]">
-              <div className="flex items-center space-x-2">
-                <Bot className="w-4 h-4" />
-                <div className="flex space-x-1">
-                  <div className="w-2 h-2 bg-gray-400 rounded-full animate-bounce"></div>
-                  <div className="w-2 h-2 bg-gray-400 rounded-full animate-bounce" style={{ animationDelay: '0.1s' }}></div>
-                  <div className="w-2 h-2 bg-gray-400 rounded-full animate-bounce" style={{ animationDelay: '0.2s' }}></div>
-                </div>
-              </div>
-            </div>
+        {error && (
+          <div className="bg-red-100 dark:bg-red-900 border border-red-400 text-red-700 dark:text-red-200 px-4 py-3 rounded">
+            <strong>Error:</strong> {error}
           </div>
         )}
         <div ref={messagesEndRef} />
       </div>
 
       {/* Input Area */}
-      <div className="border-t border-gray-200 p-4">
-        <form onSubmit={handleSubmit} className="flex space-x-2">
-          <Input
+      <form onSubmit={handleSubmit} className="p-4 border-t border-gray-200 dark:border-gray-700">
+        <div className="flex gap-2">
+          <input
             type="text"
-            value={inputValue}
-            onChange={(e) => setInputValue(e.target.value)}
-            onKeyPress={handleKeyPress}
-            placeholder="Type your message..."
+            value={input}
+            onChange={(e) => setInput(e.target.value)}
+            placeholder="Ask me to create a project, fix code, or help with development..."
             disabled={isGenerating}
-            className="flex-1 border-gray-300 focus:border-blue-500 focus:ring-blue-500"
+            className="flex-1 px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 dark:bg-gray-800 dark:text-white disabled:opacity-50"
           />
-          <Button
-            type="submit"
-            disabled={!inputValue.trim() || isGenerating}
-            className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2"
-          >
-            <Send className="w-4 h-4" />
-          </Button>
-        </form>
-      </div>
+          {isGenerating ? (
+            <button
+              type="button"
+              onClick={handleStop}
+              className="px-4 py-2 bg-red-500 text-white rounded-md hover:bg-red-600 transition-colors flex items-center gap-2"
+            >
+              <StopCircle className="w-4 h-4" />
+              Stop
+            </button>
+          ) : (
+            <button
+              type="submit"
+              disabled={!input.trim()}
+              className="px-4 py-2 bg-blue-500 text-white rounded-md hover:bg-blue-600 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+            >
+              Send
+            </button>
+          )}
+        </div>
+      </form>
     </div>
   );
 };

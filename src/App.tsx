@@ -22,6 +22,7 @@ import KnappilyCloneChat from "./pages/KnappilyCloneChat";
 import AutoPromptChat from "./pages/AutoPromptChat";
 import CodeAgentChat from "./pages/CodeAgentChat";
 import AgentDetail from "./pages/AgentDetail";
+import StreamingParserDebug from "./components/debug/StreamingParserDebug";
 import NotFound from "./pages/NotFound";
 
 const queryClient = new QueryClient();
@@ -50,6 +51,7 @@ const App = () => (
             <Route path="/qoffee" element={<AudioPlayerProvider><KnappilyProvider><KnappilyCloneChat /></KnappilyProvider></AudioPlayerProvider>} />
             <Route path="/qoffee/:articleId/:section" element={<AudioPlayerProvider><KnappilyProvider><KnappilyCloneChat /></KnappilyProvider></AudioPlayerProvider>} />
             <Route path="/agent/:agentId" element={<AgentDetail />} />
+            <Route path="/debug/streaming-parser" element={<StreamingParserDebug />} />
             {/* ADD ALL CUSTOM ROUTES ABOVE THE CATCH-ALL "*" ROUTE */}
             <Route path="*" element={<NotFound />} />
           </Routes>

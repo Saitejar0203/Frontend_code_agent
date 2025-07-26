@@ -8,15 +8,18 @@ import { AuthGuard } from '../components/auth';
 import useMobileDetection from '../components/chat/mobile/useMobileDetection';
 import CodeChatInterface from '../components/code/CodeChatInterface';
 import CodeTabs from '../components/code/CodeTabs';
-import { webcontainerManager } from '../components/WebContainer';
 
-interface Message {
-  id: string;
-  content: string;
-  sender: 'user' | 'agent';
-  timestamp: Date;
-  type?: 'instruction' | 'file' | 'command' | 'complete' | 'error';
-}
+import { actionRunner } from '@/lib/runtime/ActionRunner';
+import { useStore } from '@nanostores/react';
+import { chatStore, addMessage, clearMessages, setGenerating, updateMessage, type Message } from '@/lib/stores/chatStore';
+import { filesStore, setFileTree } from '@/lib/stores/filesStore';
+import { workbenchStore } from '@/lib/stores/workbenchStore';
+import { artifactPanelVisible, clearArtifacts } from '@/lib/stores/artifactStore';
+import { StreamingMessageParser } from '@/lib/runtime/StreamingMessageParser';
+import type { ParserCallbacks } from '@/lib/runtime/StreamingMessageParser';
+import Artifact from '@/components/Artifact';
+
+// Remove local Message interface - use the one from chatStore
 
 interface ProjectFile {
   path: string;
@@ -58,16 +61,22 @@ interface FileNode {
   type: 'file' | 'folder';
   children?: FileNode[];
   content?: string;
+  path?: string;
+  isExpanded?: boolean;
 }
 
 const CodeAgentChat: React.FC = () => {
   const [inputValue, setInputValue] = useState('');
   const [isInChatMode, setIsInChatMode] = useState(false);
-  const [messages, setMessages] = useState<Message[]>([]);
-  const [isGenerating, setIsGenerating] = useState(false);
-  const [files, setFiles] = useState<FileNode[]>([]);
-  const [previewUrl, setPreviewUrl] = useState<string | undefined>(undefined);
   const { isMobile } = useMobileDetection();
+  
+  // Use stores for state management
+  const { messages, isGenerating } = useStore(chatStore);
+  const { fileTree } = useStore(filesStore);
+  const { previewUrl } = useStore(workbenchStore);
+  const isArtifactPanelVisible = useStore(artifactPanelVisible);
+
+  // Testing code removed - cleanup complete
 
   // Add no-scroll class to body for mobile chat behavior
   useEffect(() => {
@@ -85,8 +94,12 @@ const CodeAgentChat: React.FC = () => {
   };
 
   const handleNewChat = () => {
-    // TODO: Implement new chat functionality
-    console.log('New chat clicked');
+    clearMessages();
+    clearArtifacts();
+    setGenerating(false);
+    setIsInChatMode(false);
+    setInputValue('');
+    setFileTree([]);
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -101,56 +114,41 @@ const CodeAgentChat: React.FC = () => {
       timestamp: new Date()
     };
     
-    setMessages(prev => [...prev, userMessage]);
+    addMessage(userMessage);
     const userInput = inputValue;
     setInputValue('');
     setIsInChatMode(true);
-    setIsGenerating(true);
+    setGenerating(true);
     
-    // Initialize WebContainer when user sends first message
+    // Initialize ActionRunner when user sends first message
     try {
-      if (!webcontainerManager.isWebContainerBooted()) {
-        console.log('Initializing WebContainer...');
-        await webcontainerManager.boot();
-        console.log('WebContainer initialized successfully');
-        
-        // Add a status message about WebContainer initialization
-        const initMessage: Message = {
-          id: `${Date.now()}-webcontainer-init`,
-          content: '🚀 WebContainer initialized and ready for development',
-          sender: 'agent',
-          timestamp: new Date(),
-          type: 'instruction'
-        };
-        setMessages(prev => [...prev, initMessage]);
-      }
+      await actionRunner.initialize();
+      console.log('ActionRunner initialized successfully');
     } catch (error) {
-      console.error('Failed to initialize WebContainer:', error);
+      console.error('Failed to initialize ActionRunner:', error);
       const errorMessage: Message = {
         id: `${Date.now()}-init-error`,
-        content: `❌ Failed to initialize WebContainer: ${error}`,
+        content: `❌ Failed to initialize ActionRunner: ${error}`,
         sender: 'agent',
         timestamp: new Date(),
         type: 'error'
       };
-      setMessages(prev => [...prev, errorMessage]);
+      addMessage(errorMessage);
     }
     
     try {
-      // Call the structured streaming API
-      const codeAgentUrl = import.meta.env.VITE_CODE_AGENT_URL || import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000';
-      const response = await fetch(`${codeAgentUrl}/api/code-agent/generate-project-structured`, {
+      // Call the Gemini API streaming chat endpoint
+      const codeAgentUrl = import.meta.env.VITE_CODE_AGENT_URL || import.meta.env.VITE_API_BASE_URL || 'http://localhost:8002';
+      const response = await fetch(`${codeAgentUrl}/api/v1/chat`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
+          'Accept': 'text/plain',
         },
         body: JSON.stringify({
-          project_name: extractProjectName(userInput),
-          description: userInput,
-          use_typescript: true,
-          styling_framework: 'tailwind',
-          include_routing: true,
-          include_state_management: false
+          message: userInput,
+          conversation_history: [],
+          stream: true
         })
       });
 
@@ -160,165 +158,118 @@ const CodeAgentChat: React.FC = () => {
 
       const reader = response.body.getReader();
       const decoder = new TextDecoder();
-      const currentFiles: FileNode[] = [];
+      
+      // Set up parser callbacks for artifact and action handling
+      const parserCallbacks: ParserCallbacks = {
+        onArtifactOpen: ({ messageId, id, title }) => {
+          console.log(`Artifact opened: ${id} - ${title}`);
+          // Artifact store will handle this automatically
+        },
+        onArtifactClose: ({ messageId, id, title }) => {
+          console.log(`Artifact closed: ${id} - ${title}`);
+        },
+        onActionOpen: ({ artifactId, messageId, actionId, action }) => {
+          console.log(`Action opened: ${action.type} in artifact ${artifactId}`);
+          // Execute the action
+          if (action.type === 'file' && action.filePath) {
+            actionRunner.handleFile(action.filePath, action.content || '', artifactId);
+          } else if (action.type === 'shell') {
+            actionRunner.handleCommand(action.content || '', artifactId);
+          }
+        },
+        onActionClose: ({ artifactId, messageId, actionId, action }) => {
+          console.log(`Action closed: ${action.type} in artifact ${artifactId}`);
+        }
+      };
+      
+      const messageParser = new StreamingMessageParser({ callbacks: parserCallbacks });
+      let accumulatedText = '';
+      let buffer = '';
+      const messageId = `msg-${Date.now()}`;
       
       while (true) {
         const { done, value } = await reader.read();
         if (done) break;
         
         const chunk = decoder.decode(value);
-        const lines = chunk.split('\n');
+        buffer += chunk;
+        
+        // Process complete SSE messages
+        const lines = buffer.split('\n');
+        buffer = lines.pop() || ''; // Keep incomplete line in buffer
         
         for (const line of lines) {
           if (line.startsWith('data: ')) {
             try {
-              const data: StreamResponse = JSON.parse(line.slice(6));
+              const jsonData = JSON.parse(line.slice(6)); // Remove 'data: ' prefix
               
-              // Add message to chat
-              const agentMessage: Message = {
-                id: `${Date.now()}-${Math.random()}`,
-                content: data.content,
-                sender: 'agent',
-                timestamp: new Date(),
-                type: data.type
-              };
-              setMessages(prev => [...prev, agentMessage]);
+              // Handle completion signal
+              if (jsonData.done) {
+                break;
+              }
               
-              // Handle different response types
-              if (data.type === 'structured_data' && data.structured_data) {
-                const { files, commands, instructions } = data.structured_data;
+              if (jsonData.chunk) {
+                // Parse the Bolt-style content within the SSE message
+                const parsedContent = messageParser.parse(messageId, jsonData.chunk);
                 
-                // Process all files first (batch mounting)
-                console.log(`Processing ${files.length} files for batch mounting...`);
-                
-                // Add all files to the file structure
-                for (const file of files) {
-                  addFileToStructure(currentFiles, file.path, file.content);
-                }
-                setFiles([...currentFiles]);
-                
-                // Mount all files to WebContainer in batch
-                try {
-                  const fileMap: Record<string, string> = {};
-                  files.forEach(file => {
-                    fileMap[file.path] = file.content;
-                  });
+                if (parsedContent && parsedContent.trim()) {
+                  // Accumulate only the filtered text content (without artifacts/actions)
+                  accumulatedText += parsedContent;
                   
-                  await webcontainerManager.mountFiles(fileMap);
-                  console.log('All files mounted successfully');
+                  // Create or update the current agent message
+                  const currentMessages = chatStore.get().messages;
+                  const lastMessage = currentMessages[currentMessages.length - 1];
                   
-                  // Add a status message about file mounting
-                  const fileMountMessage: Message = {
-                    id: `${Date.now()}-files-mounted`,
-                    content: `✅ Successfully mounted ${files.length} project files to WebContainer`,
-                    sender: 'agent',
-                    timestamp: new Date(),
-                    type: 'instruction'
-                  };
-                  setMessages(prev => [...prev, fileMountMessage]);
-                  
-                } catch (error) {
-                  console.error('Failed to mount files:', error);
-                  const errorMessage: Message = {
-                    id: `${Date.now()}-mount-error`,
-                    content: `❌ Failed to mount files: ${error}`,
-                    sender: 'agent',
-                    timestamp: new Date(),
-                    type: 'error'
-                  };
-                  setMessages(prev => [...prev, errorMessage]);
-                }
-                
-                // Execute commands in sequence (sorted by priority)
-                const sortedCommands = commands.sort((a, b) => a.priority - b.priority);
-                
-                for (const command of sortedCommands) {
-                  try {
-                    console.log(`Executing command: ${command.cmd} ${command.args.join(' ')}`);
-                    
-                    const commandStartMessage: Message = {
-                      id: `${Date.now()}-cmd-start-${command.priority}`,
-                      content: `🔧 Starting: ${command.description}\n\`\`\`bash\n$ ${command.cmd} ${command.args.join(' ')}\n\`\`\``,
-                      sender: 'agent',
-                      timestamp: new Date(),
-                      type: 'instruction'
-                    };
-                    setMessages(prev => [...prev, commandStartMessage]);
-                    
-                    // Execute command and capture result
-                    const result = await webcontainerManager.executeCommand(command.cmd, command.args, {
-                      cwd: command.cwd
+                  if (lastMessage && lastMessage.sender === 'agent' && lastMessage.isStreaming) {
+                    // Update existing streaming message
+                    updateMessage(lastMessage.id, {
+                      ...lastMessage,
+                      content: accumulatedText
                     });
-                    
-                    // Show completion status
-                    const commandCompleteMessage: Message = {
-                      id: `${Date.now()}-cmd-complete-${command.priority}`,
-                      content: result.exitCode === 0 
-                        ? `✅ Completed: ${command.description}` 
-                        : `⚠️ Command finished with exit code ${result.exitCode}: ${command.description}`,
+                  } else {
+                    // Create new streaming message
+                    const agentMessage: Message = {
+                      id: `${Date.now()}-${Math.random()}`,
+                      content: accumulatedText,
                       sender: 'agent',
                       timestamp: new Date(),
-                      type: result.exitCode === 0 ? 'instruction' : 'error'
+                      type: 'instruction',
+                      isStreaming: true
                     };
-                    setMessages(prev => [...prev, commandCompleteMessage]);
-                    
-                    console.log(`Command completed: ${command.cmd} (exit code: ${result.exitCode})`);
-                    
-                  } catch (error) {
-                    console.error(`Failed to execute command ${command.cmd}:`, error);
-                    const errorMessage: Message = {
-                      id: `${Date.now()}-cmd-error-${command.priority}`,
-                      content: `❌ Failed to execute: ${command.description}\n\nError: ${error}`,
-                      sender: 'agent',
-                      timestamp: new Date(),
-                      type: 'error'
-                    };
-                    setMessages(prev => [...prev, errorMessage]);
+                    addMessage(agentMessage);
                   }
-                }
-                
-                // Add terminal access message
-                const terminalMessage: Message = {
-                  id: `${Date.now()}-terminal-info`,
-                  content: `🖥️ **Terminal Access Available**\n\nYou can now view the terminal output by clicking on the "Terminal" tab below. All command execution logs and real-time output will be displayed there.\n\n**Next Steps:**\n1. Click the "Terminal" tab to see live command output\n2. Monitor the installation progress\n3. Check for any errors or warnings\n4. Once installation completes, your development server will start automatically`,
-                  sender: 'agent',
-                  timestamp: new Date(),
-                  type: 'instruction'
-                };
-                setMessages(prev => [...prev, terminalMessage]);
-                
-                // Add instructions as a final message
-                if (instructions) {
-                  const instructionsMessage: Message = {
-                    id: `${Date.now()}-instructions`,
-                    content: instructions,
-                    sender: 'agent',
-                    timestamp: new Date(),
-                    type: 'instruction'
-                  };
-                  setMessages(prev => [...prev, instructionsMessage]);
-                }
-                
-              } else if (data.type === 'file' && data.file_path) {
-                // Legacy file handling (for backward compatibility)
-                addFileToStructure(currentFiles, data.file_path, data.content);
-                setFiles([...currentFiles]);
-              } else if (data.type === 'command' && data.command && data.args) {
-                // Legacy command handling (for backward compatibility)
-                try {
-                  await webcontainerManager.executeCommand(data.command, data.args, {
-                    cwd: data.cwd || '/'
-                  });
-                } catch (error) {
-                  console.error('Failed to execute command:', error);
                 }
               }
               
+              // Handle errors
+              if (jsonData.error) {
+                console.error('Gemini API error:', jsonData.error);
+                throw new Error(jsonData.error);
+              }
             } catch (error) {
-              console.error('Failed to parse SSE data:', error);
+              console.error('Failed to parse SSE data:', error, 'Line:', line);
             }
           }
         }
+      }
+      
+      // Process any remaining buffer content
+      if (buffer.trim()) {
+        const parsedContent = messageParser.parse(messageId, buffer);
+        if (parsedContent) {
+          accumulatedText += parsedContent;
+        }
+      }
+      
+      // Mark the final message as complete
+      const currentMessages = chatStore.get().messages;
+      const lastMessage = currentMessages[currentMessages.length - 1];
+      if (lastMessage && lastMessage.sender === 'agent' && lastMessage.isStreaming) {
+        updateMessage(lastMessage.id, {
+          ...lastMessage,
+          content: accumulatedText,
+          isStreaming: false
+        });
       }
       
     } catch (error) {
@@ -328,11 +279,11 @@ const CodeAgentChat: React.FC = () => {
         content: 'Sorry, I encountered an error while generating your project. Please try again.',
         sender: 'agent',
         timestamp: new Date(),
-        type: 'error'
+        type: 'text'
       };
-      setMessages(prev => [...prev, errorMessage]);
+      addMessage(errorMessage);
     } finally {
-      setIsGenerating(false);
+      setGenerating(false);
     }
   };
   
@@ -345,64 +296,9 @@ const CodeAgentChat: React.FC = () => {
     return projectWords.length > 0 ? projectWords.join('-') : 'my-react-app';
   };
   
-  const addFileToStructure = (files: FileNode[], filePath: string, content: string) => {
-    const parts = filePath.split('/');
-    let current = files;
-    
-    for (let i = 0; i < parts.length - 1; i++) {
-      const part = parts[i];
-      let folder = current.find(f => f.name === part && f.type === 'folder');
-      
-      if (!folder) {
-        folder = {
-          name: part,
-          type: 'folder',
-          children: []
-        };
-        current.push(folder);
-      }
-      
-      current = folder.children!;
-    }
-    
-    const fileName = parts[parts.length - 1];
-    const existingFile = current.find(f => f.name === fileName);
-    
-    if (existingFile) {
-      existingFile.content = content;
-    } else {
-      current.push({
-        name: fileName,
-        type: 'file',
-        content
-      });
-    }
-  };
+  // File operations are now handled directly by ActionRunner
   
-  const handleChatMessage = async (message: string) => {
-    const userMessage: Message = {
-      id: Date.now().toString(),
-      content: message,
-      sender: 'user',
-      timestamp: new Date()
-    };
-    
-    setMessages(prev => [...prev, userMessage]);
-    setIsGenerating(true);
-    
-    // For follow-up messages, we can implement more specific handling
-    // For now, provide a simple response
-    setTimeout(() => {
-      const agentMessage: Message = {
-        id: (Date.now() + 1).toString(),
-        content: `I understand. Let me help you with that modification.`,
-        sender: 'agent',
-        timestamp: new Date()
-      };
-      setMessages(prev => [...prev, agentMessage]);
-      setIsGenerating(false);
-    }, 1500);
-  };
+
 
   // Mobile view - show "use laptop" message
   if (isMobile) {
@@ -532,20 +428,23 @@ const CodeAgentChat: React.FC = () => {
             </div>
           </div>
         ) : (
-          /* Split layout: 1/3 chat, 2/3 iframe */
+          /* Split layout with dynamic widths based on artifact panel visibility */
           <div className="flex-1 flex overflow-hidden">
-            {/* Chat Interface - 1/3 */}
-            <div className="w-1/3 flex-shrink-0">
-              <CodeChatInterface
-                messages={messages}
-                onSendMessage={handleChatMessage}
-                isGenerating={isGenerating}
-              />
+            {/* Chat Interface */}
+            <div className={`${isArtifactPanelVisible ? 'w-1/4' : 'w-1/3'} flex-shrink-0`}>
+              <CodeChatInterface />
             </div>
             
-            {/* Code Tabs - 2/3 */}
+            {/* Artifact Panel (when visible) */}
+            {isArtifactPanelVisible && (
+              <div className="w-1/4 border-r border-gray-200">
+                <Artifact />
+              </div>
+            )}
+            
+            {/* Code Tabs */}
             <div className="flex-1">
-              <CodeTabs files={files} previewUrl={previewUrl} />
+              <CodeTabs />
             </div>
           </div>
         )}

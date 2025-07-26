@@ -1,52 +1,40 @@
 import React, { useState, useEffect } from 'react';
+import { useStore } from '@nanostores/react';
 import { Files, Eye, Terminal } from 'lucide-react';
-import FileExplorer from './FileExplorer';
+import { FileExplorer } from './FileExplorer';
 import { WebContainerComponent, StreamedFile } from '../WebContainer';
+import { filesStore, type FileNode } from '@/lib/stores/filesStore';
+import { workbenchStore } from '@/lib/stores/workbenchStore';
 
-interface FileNode {
-  name: string;
-  type: 'file' | 'folder';
-  children?: FileNode[];
-  content?: string;
-}
+interface CodeTabsProps {}
 
-interface CodeTabsProps {
-  files: FileNode[];
-  previewUrl?: string;
-}
-
-const CodeTabs: React.FC<CodeTabsProps> = ({ files, previewUrl }) => {
+const CodeTabs: React.FC<CodeTabsProps> = () => {
+  const { files, selectedFile } = useStore(filesStore);
+  const { previewUrl } = useStore(workbenchStore);
   const [activeTab, setActiveTab] = useState<'files' | 'preview'>('files');
-  const [selectedFile, setSelectedFile] = useState<FileNode | null>(null);
   const [streamedFiles, setStreamedFiles] = useState<StreamedFile[]>([]);
   const [webContainerPreviewUrl, setWebContainerPreviewUrl] = useState<string | null>(null);
 
-  const handleFileSelect = (file: FileNode) => {
-    setSelectedFile(file);
-  };
-
   // Convert FileNode structure to StreamedFile format for WebContainer
   useEffect(() => {
-    const convertToStreamedFiles = (nodes: FileNode[], basePath = ''): StreamedFile[] => {
+    const convertToStreamedFiles = (nodes: FileNode[]): StreamedFile[] => {
       const result: StreamedFile[] = [];
       
       for (const node of nodes) {
         if (node.type === 'file' && node.content) {
-          const filePath = basePath ? `${basePath}/${node.name}` : node.name;
           result.push({
-            file_path: filePath,
+            file_path: node.path,
             content: node.content
           });
         } else if (node.type === 'folder' && node.children) {
-          const folderPath = basePath ? `${basePath}/${node.name}` : node.name;
-          result.push(...convertToStreamedFiles(node.children, folderPath));
+          result.push(...convertToStreamedFiles(node.children));
         }
       }
       
       return result;
     };
 
-    if (files.length > 0) {
+    if (files && files.length > 0) {
       const converted = convertToStreamedFiles(files);
       setStreamedFiles(converted);
     }
@@ -55,6 +43,22 @@ const CodeTabs: React.FC<CodeTabsProps> = ({ files, previewUrl }) => {
   const handleWebContainerPreviewUrl = (url: string | null) => {
     setWebContainerPreviewUrl(url);
   };
+
+  // Helper function to find file content by path
+  const findFileByPath = (nodes: FileNode[], targetPath: string): FileNode | null => {
+    for (const node of nodes) {
+      if (node.path === targetPath) {
+        return node;
+      }
+      if (node.type === 'folder' && node.children) {
+        const found = findFileByPath(node.children, targetPath);
+        if (found) return found;
+      }
+    }
+    return null;
+  };
+
+  const selectedFileNode = selectedFile && files ? findFileByPath(files, selectedFile) : null;
 
   return (
     <div className="h-full bg-gray-900" style={{ display: 'grid', gridTemplateRows: 'auto 1fr auto', gridTemplateAreas: '"header" "main" "terminal"' }}>
@@ -90,19 +94,19 @@ const CodeTabs: React.FC<CodeTabsProps> = ({ files, previewUrl }) => {
           <div className="h-full flex">
             {/* File Explorer */}
             <div className="w-1/3 border-r border-gray-700">
-              <FileExplorer files={files} onFileSelect={handleFileSelect} />
+              <FileExplorer />
             </div>
             
             {/* File Content Viewer */}
             <div className="flex-1 bg-gray-900">
-              {selectedFile && selectedFile.type === 'file' ? (
+              {selectedFileNode && selectedFileNode.type === 'file' ? (
                 <div className="h-full flex flex-col">
                   <div className="px-4 py-3 border-b border-gray-700 bg-gray-800">
-                    <h4 className="text-sm font-medium text-gray-200">{selectedFile.name}</h4>
+                    <h4 className="text-sm font-medium text-gray-200">{selectedFileNode.name}</h4>
                   </div>
                   <div className="flex-1 p-4 overflow-y-auto">
                     <pre className="text-sm text-gray-300 font-mono whitespace-pre-wrap">
-                      {selectedFile.content || '// File content will be displayed here'}
+                      {selectedFileNode.content || '// File content will be displayed here'}
                     </pre>
                   </div>
                 </div>
@@ -166,7 +170,7 @@ const CodeTabs: React.FC<CodeTabsProps> = ({ files, previewUrl }) => {
               onPreviewUrlChange={handleWebContainerPreviewUrl}
               autoInstall={true}
               autoStart={true}
-              skipInitialization={true}
+              skipInitialization={false}
             />
           </div>
         </div>

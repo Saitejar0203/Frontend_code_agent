@@ -1,136 +1,195 @@
-import React, { useEffect, useRef, useState, useCallback } from 'react';
-import { webcontainerManager, StreamedFile } from '../../services/webcontainerService';
+import { Terminal } from '@xterm/xterm';
+import { FitAddon } from '@xterm/addon-fit';
 import '@xterm/xterm/css/xterm.css';
+import React, { useEffect, useRef, useState, useCallback } from 'react';
+import { webcontainerManager } from '../../services/webcontainerService';
+import { setWebContainerReady } from '../../lib/stores/workbenchStore';
+
+export interface StreamedFile {
+  file_path: string;
+  content: string;
+}
 
 interface WebContainerComponentProps {
-  files: StreamedFile[];
-  onPreviewUrlChange?: (url: string | null) => void;
-  onStatusChange?: (status: 'booting' | 'ready' | 'installing' | 'running' | 'error') => void;
+  files?: StreamedFile[];
   autoInstall?: boolean;
   autoStart?: boolean;
   skipInitialization?: boolean;
+  className?: string;
+  onPreviewUrlChange?: (url: string | null) => void;
 }
 
 const WebContainerComponent: React.FC<WebContainerComponentProps> = ({
-  files,
-  onPreviewUrlChange,
-  onStatusChange,
+  files = [],
   autoInstall = true,
   autoStart = true,
-  skipInitialization = false
+  skipInitialization = false,
+  className,
+  onPreviewUrlChange
 }) => {
   const terminalRef = useRef<HTMLDivElement>(null);
-  const initAttemptedRef = useRef(false);
+  const terminalInstanceRef = useRef<Terminal | null>(null);
+  const fitAddonRef = useRef<FitAddon | null>(null);
   const [status, setStatus] = useState<'booting' | 'ready' | 'installing' | 'running' | 'error'>('booting');
   const [isInitialized, setIsInitialized] = useState(false);
-  const [terminalOutput, setTerminalOutput] = useState<string[]>([]);
+  const [terminalOutput, setTerminalOutput] = useState<string>('');
+  const [previewUrl, setPreviewUrl] = useState<string>('');
+  const [terminalVisible, setTerminalVisible] = useState<boolean>(true);
+  
+  const appendTerminalOutput = useCallback((data: string) => {
+    setTerminalOutput(prev => prev + data);
+  }, []);
 
   const updateStatus = useCallback((newStatus: typeof status) => {
     setStatus(newStatus);
-    onStatusChange?.(newStatus);
-  }, [onStatusChange]);
+    setWebContainerReady(newStatus === 'ready' || newStatus === 'running');
+  }, []);
+
+  const initializeTerminal = useCallback(() => {
+    if (!terminalRef.current || terminalInstanceRef.current) {
+      return;
+    }
+
+    const terminal = new Terminal({
+      convertEol: true,
+      fontSize: 14,
+      fontFamily: 'Menlo, Monaco, "Courier New", monospace',
+      theme: {
+        background: '#1a1a1a',
+        foreground: '#ffffff'
+      }
+    });
+
+    const fitAddon = new FitAddon();
+    terminal.loadAddon(fitAddon);
+    terminal.open(terminalRef.current);
+    fitAddon.fit();
+
+    terminalInstanceRef.current = terminal;
+    fitAddonRef.current = fitAddon;
+
+    // Write welcome message
+    terminal.write('\r\n\x1b[36m🚀 WebContainer initialized successfully!\x1b[0m\r\n');
+    terminal.write('\x1b[33mReady to execute commands...\x1b[0m\r\n\r\n');
+  }, []);
 
   const initializeWebContainer = useCallback(async () => {
-    // Skip initialization if requested or already initialized
-    if (skipInitialization || initAttemptedRef.current || isInitialized) {
-      // If WebContainer is already booted externally, just set up the terminal and callbacks
-      if (webcontainerManager.isWebContainerBooted()) {
-        try {
-          // Set up preview URL callback
-          webcontainerManager.onPreviewUrlChanged((url) => {
-            onPreviewUrlChange?.(url);
-          });
-          
-          // Set up terminal output callback
-          webcontainerManager.onTerminalData((data) => {
-            setTerminalOutput(prev => [...prev, data]);
-          });
-          
-          // Initialize terminal if element is available
-           if (terminalRef.current && !webcontainerManager.getTerminal()) {
-             webcontainerManager.initializeTerminal(terminalRef.current);
-           }
-          
-          updateStatus('ready');
-          setIsInitialized(true);
-        } catch (error) {
-          console.error('Failed to set up WebContainer callbacks:', error);
-          updateStatus('error');
-        }
-      }
+    if (skipInitialization || isInitialized) {
       return;
     }
     
-    initAttemptedRef.current = true;
-    
     try {
       updateStatus('booting');
+      appendTerminalOutput('🚀 Initializing WebContainer...\n');
       
-      // Check cross-origin isolation
-      if (!webcontainerManager.isCrossOriginIsolated()) {
-        console.warn('Cross-origin isolation not enabled. WebContainer may not work properly.');
-        setTerminalOutput(prev => [...prev, '⚠️ Warning: Cross-origin isolation not enabled. Some features may not work.\n']);
-      }
+      // Wait for WebContainer to boot
+      const container = await webcontainerManager.boot();
       
-      // Boot WebContainer
-      await webcontainerManager.boot();
-      
-      // Set up preview URL callback
-      webcontainerManager.onPreviewUrlChanged((url) => {
+      // Set up server-ready listener
+      container.on('server-ready', (port, url) => {
+        console.log('Server ready on port:', port, 'URL:', url);
+        setPreviewUrl(url);
         onPreviewUrlChange?.(url);
+        appendTerminalOutput(`🌐 Server ready at ${url}\n`);
       });
       
-      // Set up terminal output callback
-      webcontainerManager.onTerminalData((data) => {
-        setTerminalOutput(prev => [...prev, data]);
-      });
-      
-      // Initialize terminal if element is available
-      if (terminalRef.current) {
-        webcontainerManager.initializeTerminal(terminalRef.current);
-        // Write welcome message to terminal
-        const terminal = webcontainerManager.getTerminal();
-        if (terminal) {
-          terminal.write('\r\n\x1b[36m🚀 WebContainer initialized successfully!\x1b[0m\r\n');
-          terminal.write('\x1b[33mReady to execute commands...\x1b[0m\r\n\r\n');
-        }
-      }
+      // Initialize terminal
+      initializeTerminal();
       
       updateStatus('ready');
       setIsInitialized(true);
+      appendTerminalOutput('✅ WebContainer ready!\n');
       
     } catch (error) {
       console.error('Failed to initialize WebContainer:', error);
-      setTerminalOutput(prev => [...prev, `❌ WebContainer initialization failed: ${error}\n`]);
+      appendTerminalOutput(`❌ WebContainer initialization failed: ${error}\n`);
       updateStatus('error');
-      initAttemptedRef.current = false; // Reset on error to allow retry
     }
-  }, [skipInitialization, isInitialized, updateStatus, onPreviewUrlChange]);
+  }, [skipInitialization, isInitialized, updateStatus, initializeTerminal]);
 
   const mountFiles = useCallback(async () => {
     if (!isInitialized || files.length === 0) return;
     
     try {
-      await webcontainerManager.mountFiles(files);
+      const container = await webcontainerManager.boot();
+      
+      // Convert files to FileSystemTree format
+      const fileSystemTree: any = {};
+      
+      for (const file of files) {
+        const pathParts = file.file_path.split('/').filter(part => part !== '');
+        let current = fileSystemTree;
+        
+        // Create nested directory structure
+        for (let i = 0; i < pathParts.length - 1; i++) {
+          const part = pathParts[i];
+          if (!current[part]) {
+            current[part] = { directory: {} };
+          }
+          current = current[part].directory;
+        }
+        
+        // Add the file
+        const fileName = pathParts[pathParts.length - 1];
+        current[fileName] = {
+          file: {
+            contents: file.content
+          }
+        };
+      }
+      
+      await container.mount(fileSystemTree);
+      appendTerminalOutput(`📁 Mounted ${files.length} files\n`);
       
       if (autoInstall) {
         updateStatus('installing');
-        const installResult = await webcontainerManager.installDependencies();
+        appendTerminalOutput('📦 Installing dependencies...\n');
         
-        if (installResult.exitCode === 0) {
+        const installProcess = await container.spawn('npm', ['install']);
+        
+        installProcess.output.pipeTo(
+          new WritableStream({
+            write(data) {
+              appendTerminalOutput(data);
+              if (terminalInstanceRef.current) {
+                terminalInstanceRef.current.write(data);
+              }
+            },
+          })
+        );
+        
+        const installExitCode = await installProcess.exit;
+        
+        if (installExitCode === 0) {
+          appendTerminalOutput('✅ Dependencies installed successfully\n');
+          
           if (autoStart) {
             updateStatus('running');
-            await webcontainerManager.startDevServer();
+            appendTerminalOutput('🚀 Starting development server...\n');
+            
+            const startProcess = await container.spawn('npm', ['start']);
+            
+            startProcess.output.pipeTo(
+              new WritableStream({
+                write(data) {
+                  appendTerminalOutput(data);
+                  if (terminalInstanceRef.current) {
+                    terminalInstanceRef.current.write(data);
+                  }
+                },
+              })
+            );
           } else {
             updateStatus('ready');
           }
         } else {
-          console.error('Failed to install dependencies:', installResult.output);
+          appendTerminalOutput('❌ Failed to install dependencies\n');
           updateStatus('error');
         }
       }
     } catch (error) {
       console.error('Failed to mount files:', error);
+      appendTerminalOutput(`❌ Failed to mount files: ${error}\n`);
       updateStatus('error');
     }
   }, [files, isInitialized, autoInstall, autoStart, updateStatus]);
@@ -142,7 +201,7 @@ const WebContainerComponent: React.FC<WebContainerComponentProps> = ({
     return () => {
       // Only dispose if we're not skipping initialization (meaning we own the WebContainer)
       if (!skipInitialization) {
-        webcontainerManager.dispose();
+        // WebContainer cleanup handled automatically
       }
     };
   }, [initializeWebContainer]); // Depend on initializeWebContainer which includes skipInitialization
@@ -185,9 +244,9 @@ const WebContainerComponent: React.FC<WebContainerComponentProps> = ({
   };
 
   return (
-    <div className="w-full h-full flex flex-col bg-gray-900">
+    <div className={`w-full h-full flex flex-col bg-white dark:bg-gray-900 ${className || ''}`}>
       {/* Status Bar */}
-      <div className="bg-gray-800 px-4 py-2 border-b border-gray-700">
+      <div className="bg-gray-100 dark:bg-gray-800 px-4 py-2 border-b border-gray-200 dark:border-gray-700">
         <div className="flex items-center justify-between">
           <div className="flex items-center space-x-2">
             <div className={`w-2 h-2 rounded-full ${
@@ -202,7 +261,7 @@ const WebContainerComponent: React.FC<WebContainerComponentProps> = ({
           </div>
           
           {files.length > 0 && (
-            <span className="text-xs text-gray-400">
+            <span className="text-xs text-gray-500 dark:text-gray-400">
               {files.length} file{files.length !== 1 ? 's' : ''} loaded
             </span>
           )}
@@ -210,20 +269,37 @@ const WebContainerComponent: React.FC<WebContainerComponentProps> = ({
       </div>
 
       {/* Terminal */}
-      <div className="flex-1 p-4">
-        <div className="bg-black rounded-lg p-4 h-full">
-          <div className="mb-2">
-            <span className="text-green-400 text-sm font-mono">Terminal</span>
+      {terminalVisible && (
+        <div className="flex-1 p-4">
+          <div className="bg-black dark:bg-gray-950 rounded-lg p-4 h-full">
+            <div className="mb-2">
+              <span className="text-green-400 text-sm font-mono">Terminal</span>
+            </div>
+            <div 
+              ref={terminalRef} 
+              className="h-full w-full"
+              style={{ minHeight: '300px' }}
+            />
           </div>
-          <div 
-            ref={terminalRef} 
-            className="h-full w-full"
-            style={{ minHeight: '300px' }}
-          />
         </div>
-      </div>
+      )}
 
-
+      {/* Preview URL Display */}
+      {previewUrl && (
+        <div className="p-4 border-t border-gray-200 dark:border-gray-700">
+          <div className="flex items-center space-x-2">
+            <span className="text-sm text-gray-600 dark:text-gray-400">Preview:</span>
+            <a 
+              href={previewUrl} 
+              target="_blank" 
+              rel="noopener noreferrer"
+              className="text-blue-500 hover:text-blue-600 dark:text-blue-400 dark:hover:text-blue-300 text-sm underline"
+            >
+              {previewUrl}
+            </a>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

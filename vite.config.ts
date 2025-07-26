@@ -17,7 +17,7 @@ export default defineConfig(({ mode }) => ({
     componentTagger(),
     // Add CORS headers for WebContainer cross-origin isolation
     {
-      name: 'add-cors',
+      name: 'cross-origin-isolation',
       configureServer(server) {
         server.middlewares.use((_req, res, next) => {
           res.setHeader('Cross-Origin-Opener-Policy', 'same-origin');
@@ -31,6 +31,13 @@ export default defineConfig(({ mode }) => ({
   resolve: {
     alias: {
       "@": path.resolve(__dirname, "./src"),
+    },
+  },
+  // Add preview headers for production builds
+  preview: {
+    headers: {
+      'Cross-Origin-Opener-Policy': 'same-origin',
+      'Cross-Origin-Embedder-Policy': 'require-corp',
     },
   },
   // Environment variables are automatically loaded based on mode:
