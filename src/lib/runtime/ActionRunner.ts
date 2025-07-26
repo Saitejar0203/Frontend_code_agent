@@ -183,33 +183,29 @@ class ActionRunner {
     });
   }
 
-  private async executeActionInternal(data: { actionId: string; action: BoltAction; artifactId?: string }) {
-    const { actionId, artifactId } = data;
-    const action = this.actions.get(actionId);
-
-    if (!action) {
-      this.logger.error(`Action ${actionId} not found`);
-      return;
-    }
-
-    if (action.executed) {
-      return;
-    }
-
-    // Ensure WebContainer is initialized before running actions
-    await this.initialize();
-
-    this.updateAction(actionId, { ...action, ...data.action, executed: true });
-
+  private executeActionInternal(data: { actionId: string; action: BoltAction; artifactId?: string }) {
     this.currentExecutionPromise = this.currentExecutionPromise
-      .then(() => {
-        return this.executeAction(actionId, artifactId);
+      .then(async () => {
+        const { actionId, artifactId } = data;
+        const action = this.actions.get(actionId);
+
+        if (!action || action.executed) {
+          return;
+        }
+
+        // This now runs safely inside the promise chain
+        await this.initialize();
+
+        this.updateAction(actionId, { ...action, ...data.action, executed: true });
+        await this.executeAction(actionId, artifactId);
       })
       .catch((error) => {
-        this.logger.error('Action failed:', error);
+        const { artifactId } = data;
+        this.logger.error(`Action failed in execution chain:`, error);
         if (artifactId) {
           setArtifactError(artifactId, error instanceof Error ? error.message : 'Action failed');
         }
+        // We don't re-throw, so one failed action doesn't stop the entire queue
       });
   }
 
@@ -279,12 +275,11 @@ class ActionRunner {
     addRunningCommand(command);
 
     try {
-      // Use sh instead of jsh for better compatibility
       const process = await container.spawn('sh', ['-c', command], {
         env: { 
           npm_config_yes: 'true',
           NODE_ENV: 'development',
-          PATH: '/usr/local/bin:/usr/bin:/bin'
+          PATH: 'node_modules/.bin:/usr/local/bin:/usr/bin:/bin'
         },
       });
 

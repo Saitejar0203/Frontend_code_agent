@@ -166,8 +166,8 @@ const CodeTabs: React.FC<CodeTabsProps> = () => {
             <WebContainerComponent
               files={streamedFiles}
               onPreviewUrlChange={handleWebContainerPreviewUrl}
-              autoInstall={true}
-              autoStart={true}
+              autoInstall={false}
+              autoStart={false}
               skipInitialization={false}
             />
           </div>
