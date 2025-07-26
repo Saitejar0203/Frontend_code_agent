@@ -10,7 +10,7 @@ import {
   type FileNode
 } from '@/lib/stores/workbenchStore';
 import { FileSystemTree, WebContainer } from '@webcontainer/api';
-import * as nodePath from 'node:path';
+
 import { createScopedLogger } from './logger';
 import { webcontainer } from '@/lib/webcontainer';
 
@@ -44,6 +44,7 @@ export type ActionStateUpdate =
 
 class ActionRunner {
   #webcontainer: Promise<WebContainer>;
+  #isInitialized = false;
   private currentExecutionPromise: Promise<void> = Promise.resolve();
   private actions: Map<string, ActionState> = new Map();
   private logger = createScopedLogger('ActionRunner');
@@ -71,6 +72,9 @@ class ActionRunner {
   }
 
   public async initialize(): Promise<void> {
+    if (this.#isInitialized) {
+      return;
+    }
     try {
       this.logger.info('Initializing WebContainer...');
       appendTerminalOutput('🔧 Initializing WebContainer...\n');
@@ -79,11 +83,9 @@ class ActionRunner {
       
       // Test WebContainer functionality
       await container.fs.mkdir('/tmp', { recursive: true });
-      await container.fs.writeFile('/tmp/test.txt', 'WebContainer test');
-      await container.fs.readFile('/tmp/test.txt', 'utf-8');
-      await container.fs.rm('/tmp/test.txt');
       
       setWebContainerReady(true);
+      this.#isInitialized = true; // Set flag to true after success
       this.logger.info('WebContainer initialized successfully');
       appendTerminalOutput('✅ WebContainer ready\n');
       
@@ -94,6 +96,7 @@ class ActionRunner {
       this.logger.error('Failed to initialize WebContainer:', error);
       appendTerminalOutput(`❌ Failed to initialize WebContainer: ${errorMessage}\n`);
       setWebContainerReady(false);
+      this.#isInitialized = false; // Reset on failure
       throw error;
     }
   }
@@ -344,6 +347,12 @@ class ActionRunner {
     this.logger.info(`Writing file: ${filePath} (${content.length} chars)`);
 
     try {
+      // Create parent directory if it doesn't exist
+      const dir = filePath.includes('/') ? filePath.substring(0, filePath.lastIndexOf('/')) : '.';
+      if (dir && dir !== '.') {
+        await container.fs.mkdir(dir, { recursive: true });
+      }
+      
       await container.fs.writeFile(filePath, content);
       appendTerminalOutput(`  ✅ ${filePath}\n`);
       this.logger.info(`File written successfully: ${filePath}`);

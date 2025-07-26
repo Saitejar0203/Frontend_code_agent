@@ -51,6 +51,7 @@ interface MessageState {
   insideAction: boolean;
   currentArtifact?: BoltArtifactData;
   currentAction: { content: string; type?: string; filePath?: string };
+  tagBuffer: string;
   actionId: number;
 }
 
@@ -62,237 +63,161 @@ export class StreamingMessageParser {
     this.callbacks = callbacks;
   }
 
-  parse(messageId: string, input: string): string {
-    console.log('🔍 StreamingMessageParser.parse called with:', { messageId, inputLength: input.length, input: input.substring(0, 100) + (input.length > 100 ? '...' : '') });
-    
+  /**
+   * Check if the parser is currently inside an artifact for a given message
+   */
+  public isInsideArtifact(messageId: string): boolean {
+    const state = this.messages.get(messageId);
+    return state?.insideArtifact || false;
+  }
+
+  /**
+   * Check if the parser is currently inside an action for a given message
+   */
+  public isInsideAction(messageId: string): boolean {
+    const state = this.messages.get(messageId);
+    return state?.insideAction || false;
+  }
+
+  /**
+   * Check if the parser is currently inside any XML tag (artifact or action)
+   */
+  public isInsideXmlTag(messageId: string): boolean {
+    return this.isInsideArtifact(messageId) || this.isInsideAction(messageId);
+  }
+
+  parse(messageId: string, chunk: string): void {
+    logger.debug(`Parsing chunk for message ${messageId}: "${chunk.substring(0, 100)}..."`); 
     let state = this.messages.get(messageId);
 
     if (!state) {
-      console.log('🆕 Creating new parser state for message:', messageId);
       state = {
         position: 0,
-        insideAction: false,
         insideArtifact: false,
+        insideAction: false,
         currentAction: { content: '' },
+        tagBuffer: '',
         actionId: 0,
       };
-
       this.messages.set(messageId, state);
     }
+    this.processChunk(messageId, state, chunk);
+  }
 
-    let output = '';
-    let i = state.position;
-    let textBuffer = '';
+  private processChunk(messageId: string, state: MessageState, chunk: string) {
+    let currentContent = state.tagBuffer + chunk;
+    state.tagBuffer = '';
 
-    const flushTextBuffer = () => {
-      if (textBuffer.trim()) {
-        console.log('📤 StreamingMessageParser calling onText with:', textBuffer.trim().substring(0, 50) + (textBuffer.trim().length > 50 ? '...' : ''));
-        this.callbacks.onText?.(textBuffer.trim());
-        textBuffer = '';
-      }
-    };
+    while (currentContent.length > 0) {
+      if (state.insideAction) {
+        const endActionIndex = currentContent.indexOf(ARTIFACT_ACTION_TAG_CLOSE);
+        if (endActionIndex !== -1) {
+          const content = currentContent.substring(0, endActionIndex);
+          state.currentAction.content += content;
+          
+          this.callbacks.onActionClose?.({
+            messageId,
+            artifactId: state.currentArtifact?.id,
+            action: {
+              type: state.currentAction.type as 'file' | 'shell',
+              filePath: state.currentAction.filePath,
+              content: state.currentAction.content,
+            },
+          });
 
-    while (i < input.length) {
-      if (state.insideArtifact) {
-        const currentArtifact = state.currentArtifact;
+          state.insideAction = false;
+          state.currentAction = { content: '' };
+          currentContent = currentContent.substring(endActionIndex + ARTIFACT_ACTION_TAG_CLOSE.length);
+        } else {
+          state.currentAction.content += currentContent;
+          currentContent = ''; // All of chunk is action content
+        }
+      } else { // Not inside an action's content
+        const tagStartIndex = currentContent.indexOf('<');
 
-        if (currentArtifact === undefined) {
-          logger.error('Artifact not initialized');
+        if (tagStartIndex === -1) { // No tags in the rest of the content
+          if (currentContent) this.callbacks.onText?.(currentContent);
           break;
         }
 
-        if (state.insideAction) {
-          const closeIndex = input.indexOf(ARTIFACT_ACTION_TAG_CLOSE, i);
-          const currentAction = state.currentAction;
-
-          if (closeIndex !== -1) {
-            currentAction.content += input.slice(i, closeIndex);
-
-            this.callbacks.onActionClose?.({
-              messageId,
-              artifactId: currentArtifact.id,
-              action: {
-                type: currentAction.type!,
-                filePath: currentAction.filePath,
-                content: currentAction.content.trim(),
-              },
-            });
-
-            state.insideAction = false;
-            state.currentAction = { content: '' };
-
-            i = closeIndex + ARTIFACT_ACTION_TAG_CLOSE.length;
-          } else {
-            currentAction.content += input.slice(i);
-            break;
-          }
-        } else {
-          const actionOpenIndex = input.indexOf(ARTIFACT_ACTION_TAG_OPEN, i);
-          const artifactCloseIndex = input.indexOf(ARTIFACT_TAG_CLOSE, i);
-
-          if (actionOpenIndex !== -1 && (artifactCloseIndex === -1 || actionOpenIndex < artifactCloseIndex)) {
-            // Process text before action
-            const textBeforeAction = input.slice(i, actionOpenIndex);
-            if (textBeforeAction.trim()) {
-              this.callbacks.onText?.(textBeforeAction.trim());
-            }
-
-            const actionEndIndex = input.indexOf('>', actionOpenIndex);
-
-            if (actionEndIndex !== -1) {
-              state.insideAction = true;
-              state.currentAction = this.parseActionTag(input, actionOpenIndex, actionEndIndex);
-
-              this.callbacks.onActionOpen?.({
-                messageId,
-                artifactId: currentArtifact.id,
-                action: {
-                  type: state.currentAction.type!,
-                  filePath: state.currentAction.filePath,
-                  content: '', // Content will be filled when action closes
-                },
-              });
-
-              i = actionEndIndex + 1;
-            } else {
-              break;
-            }
-          } else if (artifactCloseIndex !== -1) {
-            this.callbacks.onArtifactClose?.({
-              messageId,
-              id: currentArtifact.id,
-            });
-
-            state.insideArtifact = false;
-            state.currentArtifact = undefined;
-
-            i = artifactCloseIndex + ARTIFACT_TAG_CLOSE.length;
-          } else {
-            break;
-          }
-        }
-      } else {
-        // Check for artifact start
-        const artifactOpenIndex = input.indexOf(ARTIFACT_TAG_OPEN, i);
-        // Check for standalone action
-        const actionOpenIndex = input.indexOf(ARTIFACT_ACTION_TAG_OPEN, i);
-
-        let nextTagIndex = -1;
-        let isArtifact = false;
-
-        if (artifactOpenIndex !== -1 && (actionOpenIndex === -1 || artifactOpenIndex < actionOpenIndex)) {
-          nextTagIndex = artifactOpenIndex;
-          isArtifact = true;
-        } else if (actionOpenIndex !== -1) {
-          nextTagIndex = actionOpenIndex;
-          isArtifact = false;
+        // Text before the tag
+        const text = currentContent.substring(0, tagStartIndex);
+        if (text) {
+          this.callbacks.onText?.(text);
         }
 
-        if (nextTagIndex !== -1) {
-          // Process text before tag
-          const textBeforeTag = input.slice(i, nextTagIndex);
-          if (textBeforeTag.trim()) {
-            this.callbacks.onText?.(textBeforeTag.trim());
-          }
+        const tagEndIndex = currentContent.indexOf('>', tagStartIndex);
 
-          if (isArtifact) {
-            const openTagEnd = input.indexOf('>', nextTagIndex);
-
-            if (openTagEnd !== -1) {
-              const artifactTag = input.slice(nextTagIndex, openTagEnd + 1);
-              const artifactTitle = this.extractAttribute(artifactTag, 'title') || 'Untitled';
-              const artifactId = this.extractAttribute(artifactTag, 'id') || `artifact-${Date.now()}`;
-
-              state.insideArtifact = true;
-              const currentArtifact = {
-                id: artifactId,
-                title: artifactTitle,
-              } satisfies BoltArtifactData;
-
-              state.currentArtifact = currentArtifact;
-
-              this.callbacks.onArtifactOpen?.({
-                messageId,
-                id: currentArtifact.id,
-                title: currentArtifact.title,
-              });
-
-              i = openTagEnd + 1;
-            } else {
-              break;
-            }
-          } else {
-            // Handle standalone action
-            const actionEndIndex = input.indexOf('>', nextTagIndex);
-            const actionCloseIndex = input.indexOf(ARTIFACT_ACTION_TAG_CLOSE, nextTagIndex);
-
-            if (actionEndIndex !== -1 && actionCloseIndex !== -1) {
-              const action = this.parseActionTag(input, nextTagIndex, actionEndIndex);
-              const actionContent = input.slice(actionEndIndex + 1, actionCloseIndex);
-
-              this.callbacks.onActionOpen?.({
-                messageId,
-                action: {
-                  type: action.type!,
-                  filePath: action.filePath,
-                  content: actionContent.trim(),
-                },
-              });
-
-              this.callbacks.onActionClose?.({
-                messageId,
-                action: {
-                  type: action.type!,
-                  filePath: action.filePath,
-                  content: actionContent.trim(),
-                },
-              });
-
-              i = actionCloseIndex + ARTIFACT_ACTION_TAG_CLOSE.length;
-            } else {
-              break;
-            }
-          }
-        } else {
-          // No more tags, process remaining text
-          const remainingText = input.slice(i);
-          console.log('📝 Processing remaining text:', remainingText.substring(0, 100) + (remainingText.length > 100 ? '...' : ''));
-          if (remainingText.trim()) {
-            console.log('📤 StreamingMessageParser calling onText with remaining text:', remainingText.trim().substring(0, 50) + (remainingText.trim().length > 50 ? '...' : ''));
-            this.callbacks.onText?.(remainingText.trim());
-          }
-          i = input.length;
+        if (tagEndIndex === -1) { // Incomplete tag at the end
+          state.tagBuffer = currentContent.substring(tagStartIndex);
+          break;
         }
+
+        // We have a complete tag
+        const tag = currentContent.substring(tagStartIndex, tagEndIndex + 1);
+        
+        if (tag.startsWith(ARTIFACT_ACTION_TAG_OPEN)) {
+          state.insideAction = true;
+          const action = this.parseActionTag(tag, 0, tag.length - 1);
+          state.currentAction = { ...action, content: '' };
+          this.callbacks.onActionOpen?.({ messageId, artifactId: state.currentArtifact?.id, action: state.currentAction as BoltAction });
+        } else if (tag.startsWith(ARTIFACT_TAG_OPEN)) {
+          this.handleArtifactOpen(tag, state, messageId);
+        } else if (tag.startsWith(ARTIFACT_TAG_CLOSE)) {
+          this.handleArtifactClose(state, messageId);
+        }
+        currentContent = currentContent.substring(tagEndIndex + 1);
       }
     }
-
-    state.position = i;
-    console.log('🏁 StreamingMessageParser.parse completed. Output length:', output.length, 'Final position:', i);
-    return output;
   }
   reset() {
     this.messages.clear();
   }
 
-  private parseActionTag(input: string, actionOpenIndex: number, actionEndIndex: number) {
-    const actionTag = input.slice(actionOpenIndex, actionEndIndex + 1);
-    const actionType = this.extractAttribute(actionTag, 'type');
-    
-    const actionAttributes = {
-      type: actionType,
-      content: '',
-    } as any;
+  private handleArtifactOpen(tag: string, state: MessageState, messageId: string): void {
+    const artifactTitle = this.extractAttribute(tag, 'title') || 'Untitled';
+    const artifactId = this.extractAttribute(tag, 'id') || `artifact-${Date.now()}`;
 
-    if (actionType === 'file') {
-      const filePath = this.extractAttribute(actionTag, 'filePath');
-      if (filePath) {
-        actionAttributes.filePath = filePath;
-      }
-    } else if (actionType !== 'shell') {
-      logger.warn(`Unknown action type '${actionType}'`);
+    state.insideArtifact = true;
+    const currentArtifact = {
+      id: artifactId,
+      title: artifactTitle,
+    } satisfies BoltArtifactData;
+
+    state.currentArtifact = currentArtifact;
+
+    console.log('🎨 Opening artifact:', currentArtifact);
+    this.callbacks.onArtifactOpen?.({
+      messageId,
+      id: currentArtifact.id,
+      title: currentArtifact.title,
+    });
+   }
+
+   private extractAttribute(tag: string, attributeName: string): string | undefined {
+     const regex = new RegExp(`${attributeName}=["']([^"']*)["']`);
+     const match = tag.match(regex);
+     return match ? match[1] : undefined;
+   }
+
+   private parseActionTag(input: string, startIndex: number, endIndex: number): { type?: string; filePath?: string } {
+      const tag = input.slice(startIndex, endIndex + 1);
+      const type = this.extractAttribute(tag, 'type');
+      const filePath = this.extractAttribute(tag, 'filePath');
+      return { type, filePath };
     }
 
-    return actionAttributes;
+  private handleArtifactClose(state: MessageState, messageId: string): void {
+    if (state.insideArtifact && state.currentArtifact) {
+      console.log('🎨 Closing artifact:', state.currentArtifact.id);
+      this.callbacks.onArtifactClose?.({
+        messageId,
+        id: state.currentArtifact.id,
+        title: state.currentArtifact.title,
+      });
+      state.insideArtifact = false;
+      state.currentArtifact = undefined;
+    }
   }
 
   private extractAttribute(tag: string, attributeName: string): string | undefined {

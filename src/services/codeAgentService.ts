@@ -91,6 +91,16 @@ export async function sendChatMessage(userInput: string): Promise<void> {
       onText: (text: string) => {
         console.log('📝 Received text chunk:', text);
         if (text && text.trim()) {
+          // Only accumulate text that is not inside XML tags
+          const parser = (callbacks as any)._parser;
+          const messageId = currentMessageId || `msg_${Date.now()}`;
+          
+          // Check if we're inside XML tags - if so, don't accumulate this text
+          if (parser && parser.isInsideXmlTag(messageId)) {
+            console.log('🏷️ Skipping text inside XML tags:', text.substring(0, 50) + (text.length > 50 ? '...' : ''));
+            return;
+          }
+          
           accumulatedText += text;
           console.log('📊 Accumulated text length:', accumulatedText.length);
           
@@ -114,7 +124,7 @@ export async function sendChatMessage(userInput: string): Promise<void> {
               content: accumulatedText,
               sender: 'agent',
               timestamp: new Date(),
-              type: 'instruction',
+              type: 'text',
               isStreaming: true
             };
             addMessage(agentMessage);
@@ -175,11 +185,14 @@ export async function sendChatMessage(userInput: string): Promise<void> {
 
 export async function streamAgentResponse(prompt: string, callbacks: GeminiParserCallbacks, conversationHistory: Array<{role: string, content: string}> = []) {
   console.log('🔄 streamAgentResponse started with prompt:', prompt);
-  const parser = new StreamingMessageParser({ callbacks });
+  const parser = new StreamingMessageParser(callbacks);
   // Use the new Gemini API endpoint
   const apiBaseUrl = 'http://localhost:8002';
   console.log('🌐 Making API call to:', `${apiBaseUrl}/api/v1/chat`);
   console.log('🔧 Parser callbacks configured:', Object.keys(callbacks));
+  
+  // Store parser reference for callbacks to access
+  (callbacks as any)._parser = parser;
 
   try {
     const response = await fetch(`${apiBaseUrl}/api/v1/chat`, {
@@ -240,12 +253,10 @@ export async function streamAgentResponse(prompt: string, callbacks: GeminiParse
                 console.log('🧩 Processing chunk:', chunk);
                 fullResponse += chunk;
                 // Parse the chunk content for bolt-style XML tags
-                const processedText = parser.parse(messageId, chunk);
-                console.log('🔍 Processed text from parser:', processedText);
-                if (processedText.trim()) {
-                  console.log('📤 Calling onText callback with:', processedText);
-                  callbacks.onText?.(processedText);
-                }
+                parser.parse(messageId, chunk);
+                console.log('🔍 Processed chunk with parser');
+                // Store parser reference for callbacks to access
+                (callbacks as any)._parser = parser;
               } else if (parsed.error) {
                 console.error('❌ API error received:', parsed.error);
                 callbacks.onError?.(parsed.error);
@@ -256,12 +267,10 @@ export async function streamAgentResponse(prompt: string, callbacks: GeminiParse
               // If not JSON, treat as raw text and parse for bolt tags
               if (data.trim() && data !== '[DONE]') {
                 fullResponse += data;
-                const processedText = parser.parse(messageId, data);
-                console.log('🔍 Processed raw text from parser:', processedText);
-                if (processedText.trim()) {
-                  console.log('📤 Calling onText callback with raw text:', processedText);
-                  callbacks.onText?.(processedText);
-                }
+                parser.parse(messageId, data);
+                console.log('🔍 Processed raw text with parser');
+                // Store parser reference for callbacks to access
+                (callbacks as any)._parser = parser;
               }
             }
           }
@@ -272,10 +281,9 @@ export async function streamAgentResponse(prompt: string, callbacks: GeminiParse
     // Process any remaining buffer
     if (buffer.trim()) {
       fullResponse += buffer;
-      const processedText = parser.parse(messageId, buffer);
-      if (processedText.trim()) {
-        callbacks.onText?.(processedText);
-      }
+      parser.parse(messageId, buffer);
+      // Store parser reference for callbacks to access
+      (callbacks as any)._parser = parser;
     }
     
     callbacks.onComplete?.();
@@ -288,7 +296,7 @@ export async function streamAgentResponse(prompt: string, callbacks: GeminiParse
 }
 
 export async function generateStructuredProject(prompt: string, callbacks: GeminiParserCallbacks) {
-  const parser = new StreamingMessageParser({ callbacks });
+  const parser = new StreamingMessageParser(callbacks);
   // Use the new Gemini API endpoint
   const apiBaseUrl = 'http://localhost:8002';
   
@@ -339,17 +347,11 @@ export async function generateStructuredProject(prompt: string, callbacks: Gemin
             const parsed = JSON.parse(data);
             if (parsed.chunk) {
               // Parse the chunk content for bolt-style XML tags
-              const processedText = parser.parse(messageId, parsed.chunk);
-              if (processedText.trim()) {
-                callbacks.onText?.(processedText);
-              }
+              parser.parse(messageId, parsed.chunk);
             }
           } catch (e) {
             // If not JSON, treat as raw text and parse for bolt tags
-            const processedText = parser.parse(messageId, data);
-            if (processedText.trim()) {
-              callbacks.onText?.(processedText);
-            }
+            parser.parse(messageId, data);
           }
         }
       }
@@ -357,10 +359,7 @@ export async function generateStructuredProject(prompt: string, callbacks: Gemin
     
     // Process any remaining buffer
     if (buffer.trim()) {
-      const processedText = parser.parse(messageId, buffer);
-      if (processedText.trim()) {
-        callbacks.onText?.(processedText);
-      }
+      parser.parse(messageId, buffer);
     }
     
     callbacks.onComplete?.();
