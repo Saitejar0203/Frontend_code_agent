@@ -279,14 +279,22 @@ class ActionRunner {
     }
 
     const container = await this.#webcontainer;
-    const command = action.content.trim();
+    const commandString = action.content.trim();
     
-    this.logger.info(`Executing shell command: ${command}`);
-    appendTerminalOutput(`$ ${command}\n`);
-    addRunningCommand(command);
+    // --- START OF FIX ---
+    // Split the command string into the command and its arguments
+    const [command, ...args] = commandString.split(' ');
+    // --- END OF FIX ---
+    
+    this.logger.info(`Executing shell command: ${command}`, args);
+    appendTerminalOutput(`$ ${commandString}\n`);
+    addRunningCommand(commandString);
 
     try {
-      const process = await container.spawn('sh', ['-c', command], {
+      // --- START OF FIX ---
+      // Spawn the process with the parsed command and arguments
+      const process = await container.spawn(command, args, {
+      // --- END OF FIX ---
         env: { 
           npm_config_yes: 'true',
           NODE_ENV: 'development',
@@ -295,7 +303,7 @@ class ActionRunner {
       });
 
       action.abortSignal.addEventListener('abort', () => {
-        this.logger.info(`Aborting command: ${command}`);
+        this.logger.info(`Aborting command: ${commandString}`);
         process.kill();
       });
 
@@ -312,26 +320,26 @@ class ActionRunner {
       const exitCode = await process.exit;
       
       if (action.abortSignal.aborted) {
-        this.logger.info(`Command aborted: ${command}`);
+        this.logger.info(`Command aborted: ${commandString}`);
         appendTerminalOutput(`\n⚠️ Command aborted\n`);
         return;
       }
       
       if (exitCode === 0) {
-        this.logger.info(`Command completed successfully: ${command}`);
+        this.logger.info(`Command completed successfully: ${commandString}`);
         appendTerminalOutput(`\n✅ Command completed successfully\n`);
       } else {
-        this.logger.warn(`Command failed with exit code ${exitCode}: ${command}`);
+        this.logger.warn(`Command failed with exit code ${exitCode}: ${commandString}`);
         appendTerminalOutput(`\n❌ Command failed with exit code ${exitCode}\n`);
         throw new Error(`Command failed with exit code ${exitCode}`);
       }
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-      this.logger.error(`Command execution failed: ${command}`, error);
+      this.logger.error(`Command execution failed: ${commandString}`, error);
       appendTerminalOutput(`\n❌ Command failed: ${errorMessage}\n`);
       throw error;
     } finally {
-      removeRunningCommand(command);
+      removeRunningCommand(commandString);
     }
   }
 
