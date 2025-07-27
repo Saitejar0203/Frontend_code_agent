@@ -68,6 +68,11 @@ export async function sendChatMessage(userInput: string): Promise<void> {
     let accumulatedText = '';
     let currentMessageId: string | null = null;
     
+    // --- THIS IS THE FIX ---
+    // Create a queue to hold actions until the stream is complete.
+    const actionQueue: Array<{ action: import('@/lib/runtime').BoltAction; artifactId?: string }> = [];
+    // -----------------------
+    
     // Set up parser callbacks for artifact and action handling
     const parserCallbacks: ParserCallbacks = {
       onArtifactOpen: ({ messageId, id, title }) => {
@@ -81,8 +86,10 @@ export async function sendChatMessage(userInput: string): Promise<void> {
       },
       onActionClose: ({ artifactId, messageId, action }) => {
         console.log(`⚡ Action closed: ${action.type}${artifactId ? ` in artifact ${artifactId}` : ''}`);
-        // Execute the clean BoltAction object
-        actionRunner.runAction(action, artifactId);
+        // --- THIS IS THE FIX ---
+        // Instead of executing immediately, add the action to our queue.
+        actionQueue.push({ action, artifactId });
+        // -----------------------
       }
     };
     
@@ -145,10 +152,11 @@ export async function sendChatMessage(userInput: string): Promise<void> {
         };
         addMessage(errorMessage);
       },
-      onComplete: () => {
-        console.log('✅ Stream completed, finalizing message');
+      onComplete: async () => {
+        console.log('✅ Stream completed, finalizing message and executing actions.');
         console.log('🏁 Final accumulated text length:', accumulatedText.length);
-        // Mark the final message as complete
+        
+        // Finalize the UI message
         const currentMessages = chatStore.get().messages;
         const lastMessage = currentMessages[currentMessages.length - 1];
         if (lastMessage && lastMessage.sender === 'agent' && lastMessage.isStreaming) {
@@ -159,6 +167,17 @@ export async function sendChatMessage(userInput: string): Promise<void> {
             isStreaming: false
           });
         }
+        
+        // --- THIS IS THE FIX ---
+        // Now that the stream is finished and all actions are collected,
+        // execute them sequentially.
+        console.log(`🏃‍♂️ Executing ${actionQueue.length} queued actions...`);
+        for (const item of actionQueue) {
+          // The ActionRunner's internal promise chain will ensure sequential execution.
+          actionRunner.runAction(item.action, item.artifactId);
+        }
+        // -----------------------
+        
         console.log('🏁 Final messages count:', chatStore.get().messages.length);
       }
     };
@@ -278,15 +297,41 @@ export async function streamAgentResponse(prompt: string, callbacks: GeminiParse
       }
     }
     
-    // Process any remaining buffer
+    // --- START OF THE FIX ---
+    // After the loop, the stream is done, but the decoder might have remaining bytes.
+    // Flush the decoder's internal buffer by calling it without arguments.
+    buffer += decoder.decode();
+
+    // Process any final data that was flushed from the buffer. This ensures
+    // the parser sees the very end of the message, including the final closing tags.
     if (buffer.trim()) {
-      fullResponse += buffer;
-      parser.parse(messageId, buffer);
-      // Store parser reference for callbacks to access
-      (callbacks as any)._parser = parser;
+      const lines = buffer.split('\n');
+      for (const line of lines) {
+        if (line.trim() && line.startsWith('data: ')) {
+          const data = line.slice(6);
+          if (data.trim() === '{"done": true}') continue;
+          try {
+            const parsed = JSON.parse(data);
+            if (parsed.chunk) {
+              fullResponse += parsed.chunk;
+              parser.parse(messageId, parsed.chunk);
+              (callbacks as any)._parser = parser;
+            }
+          } catch (e) {
+            if (data.trim() && data !== '[DONE]') {
+              fullResponse += data;
+              parser.parse(messageId, data);
+              (callbacks as any)._parser = parser;
+            }
+          }
+        }
+      }
     }
-    
+
+    // Now that all data has been fully parsed, we can safely call onComplete.
     callbacks.onComplete?.();
+    // --- END OF THE FIX ---
+    
     return fullResponse;
   } catch (error) {
     console.error('Error in streamAgentResponse:', error);
@@ -357,12 +402,36 @@ export async function generateStructuredProject(prompt: string, callbacks: Gemin
       }
     }
     
-    // Process any remaining buffer
+    // --- START OF THE FIX ---
+    // After the loop, the stream is done, but the decoder might have remaining bytes.
+    // Flush the decoder's internal buffer by calling it without arguments.
+    buffer += decoder.decode();
+
+    // Process any final data that was flushed from the buffer. This ensures
+    // the parser sees the very end of the message, including the final closing tags.
     if (buffer.trim()) {
-      parser.parse(messageId, buffer);
+      const lines = buffer.split('\n');
+      for (const line of lines) {
+        if (line.trim() && line.startsWith('data: ')) {
+          const data = line.slice(6);
+          if (data.trim() === '{"done": true}') continue;
+          try {
+            const parsed = JSON.parse(data);
+            if (parsed.chunk) {
+              parser.parse(messageId, parsed.chunk);
+            }
+          } catch (e) {
+            if (data.trim() && data !== '[DONE]') {
+              parser.parse(messageId, data);
+            }
+          }
+        }
+      }
     }
-    
+
+    // Now that all data has been fully parsed, we can safely call onComplete.
     callbacks.onComplete?.();
+    // --- END OF THE FIX ---
   } catch (error) {
     console.error('Error in generateStructuredProject:', error);
     callbacks.onError?.(error instanceof Error ? error.message : 'Unknown error');

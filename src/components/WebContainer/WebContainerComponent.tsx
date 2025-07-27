@@ -3,7 +3,10 @@ import { FitAddon } from '@xterm/addon-fit';
 import '@xterm/xterm/css/xterm.css';
 import React, { useEffect, useRef, useState, useCallback } from 'react';
 import { webcontainer } from '../../lib/webcontainer';
-import { setWebContainerReady } from '../../lib/stores/workbenchStore';
+// --- Start of FIX ---
+import { useStore } from '@nanostores/react';
+import { setWebContainerReady, workbenchStore } from '../../lib/stores/workbenchStore';
+// --- End of FIX ---
 
 export interface StreamedFile {
   file_path: string;
@@ -35,6 +38,21 @@ const WebContainerComponent: React.FC<WebContainerComponentProps> = ({
   const [terminalOutput, setTerminalOutput] = useState<string>('');
   const [previewUrl, setPreviewUrl] = useState<string>('');
   const [terminalVisible, setTerminalVisible] = useState<boolean>(true);
+  
+  // --- Start of FIX ---
+  const { terminalOutput: storeOutput } = useStore(workbenchStore);
+  const lastWrittenLength = useRef(0);
+
+  useEffect(() => {
+    if (terminalInstanceRef.current) {
+      const newOutput = storeOutput.substring(lastWrittenLength.current);
+      if (newOutput) {
+        terminalInstanceRef.current.write(newOutput);
+        lastWrittenLength.current = storeOutput.length;
+      }
+    }
+  }, [storeOutput]);
+  // --- End of FIX ---
   
   const appendTerminalOutput = useCallback((data: string) => {
     setTerminalOutput(prev => prev + data);

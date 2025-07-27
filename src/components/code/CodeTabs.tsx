@@ -13,6 +13,14 @@ const CodeTabs: React.FC<CodeTabsProps> = () => {
   const [streamedFiles, setStreamedFiles] = useState<StreamedFile[]>([]);
   const [webContainerPreviewUrl, setWebContainerPreviewUrl] = useState<string | null>(null);
 
+  // --- Start of FIX ---
+  useEffect(() => {
+    if (previewUrl || webContainerPreviewUrl) {
+      setActiveTab('preview');
+    }
+  }, [previewUrl, webContainerPreviewUrl]);
+  // --- End of FIX ---
+
   // Convert FileNode structure to StreamedFile format for WebContainer
   useEffect(() => {
     const convertToStreamedFiles = (nodes: FileNode[]): StreamedFile[] => {

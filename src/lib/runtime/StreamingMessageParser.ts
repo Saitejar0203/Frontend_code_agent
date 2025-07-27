@@ -108,20 +108,24 @@ export class StreamingMessageParser {
     let currentContent = state.tagBuffer + chunk;
     state.tagBuffer = '';
 
+    // Loop until the entire chunk has been processed
     while (currentContent.length > 0) {
       if (state.insideAction) {
         const endActionIndex = currentContent.indexOf(ARTIFACT_ACTION_TAG_CLOSE);
         if (endActionIndex !== -1) {
+          // *** THE FINAL FIX IS HERE ***
+          // The content is ONLY the text from the start of the chunk up to the closing tag.
           const content = currentContent.substring(0, endActionIndex);
-          state.currentAction.content += content;
-          
+          state.currentAction.content += content; // Append this part of the content
+
           this.callbacks.onActionClose?.({
             messageId,
             artifactId: state.currentArtifact?.id,
             action: {
               type: state.currentAction.type as 'file' | 'shell',
               filePath: state.currentAction.filePath,
-              content: state.currentAction.content,
+              // Use trim() on the final accumulated content to remove whitespace.
+              content: state.currentAction.content.trim(),
             },
           });
 
@@ -129,18 +133,20 @@ export class StreamingMessageParser {
           state.currentAction = { content: '' };
           currentContent = currentContent.substring(endActionIndex + ARTIFACT_ACTION_TAG_CLOSE.length);
         } else {
+          // The entire rest of the chunk is part of the content
           state.currentAction.content += currentContent;
-          currentContent = ''; // All of chunk is action content
+          currentContent = '';
         }
-      } else { // Not inside an action's content
+      } else { // We are outside an action, look for text or a new tag
         const tagStartIndex = currentContent.indexOf('<');
 
-        if (tagStartIndex === -1) { // No tags in the rest of the content
+        if (tagStartIndex === -1) {
+          // No more tags in the chunk, the rest is text
           if (currentContent) this.callbacks.onText?.(currentContent);
-          break;
+          break; // Exit the loop
         }
 
-        // Text before the tag
+        // Process any text before the tag
         const text = currentContent.substring(0, tagStartIndex);
         if (text) {
           this.callbacks.onText?.(text);
@@ -148,23 +154,39 @@ export class StreamingMessageParser {
 
         const tagEndIndex = currentContent.indexOf('>', tagStartIndex);
 
-        if (tagEndIndex === -1) { // Incomplete tag at the end
+        if (tagEndIndex === -1) {
+          // The tag is incomplete, buffer it and wait for the next chunk
           state.tagBuffer = currentContent.substring(tagStartIndex);
-          break;
+          break; // Exit the loop
         }
 
-        // We have a complete tag
+        // A full tag has been found
         const tag = currentContent.substring(tagStartIndex, tagEndIndex + 1);
         
+        // Identify and handle the tag
         if (tag.startsWith(ARTIFACT_ACTION_TAG_OPEN)) {
           state.insideAction = true;
           const action = this.parseActionTag(tag, 0, tag.length - 1);
-          state.currentAction = { ...action, content: '' };
+          state.currentAction = { ...action, content: '' }; // Reset content here
           this.callbacks.onActionOpen?.({ messageId, artifactId: state.currentArtifact?.id, action: state.currentAction as BoltAction });
         } else if (tag.startsWith(ARTIFACT_TAG_OPEN)) {
           this.handleArtifactOpen(tag, state, messageId);
         } else if (tag.startsWith(ARTIFACT_TAG_CLOSE)) {
           this.handleArtifactClose(state, messageId);
+        } else if (tag.startsWith(ARTIFACT_ACTION_TAG_CLOSE)) {
+          if (state.insideAction) {
+            this.callbacks.onActionClose?.({
+              messageId,
+              artifactId: state.currentArtifact?.id,
+              action: {
+                type: state.currentAction.type as 'file' | 'shell',
+                filePath: state.currentAction.filePath,
+                content: state.currentAction.content.trim(),
+              },
+            });
+            state.insideAction = false;
+            state.currentAction = { content: '' };
+          }
         }
         currentContent = currentContent.substring(tagEndIndex + 1);
       }

@@ -14,6 +14,17 @@ import { FileSystemTree, WebContainer } from '@webcontainer/api';
 import { createScopedLogger } from './logger';
 import { webcontainer } from '@/lib/webcontainer';
 
+// Helper function to decode HTML entities
+function decodeHtmlEntities(text: string): string {
+  if (typeof document === 'undefined') {
+    // Basic fallback for non-browser environments if needed
+    return text.replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&amp;/g, '&');
+  }
+  const textarea = document.createElement('textarea');
+  textarea.innerHTML = text;
+  return textarea.value;
+}
+
 export type ActionStatus = 'pending' | 'running' | 'complete' | 'aborted' | 'failed';
 
 export interface BoltAction {
@@ -337,7 +348,11 @@ class ActionRunner {
 
     const container = await this.#webcontainer;
     const filePath = action.filePath;
-    const content = action.content;
+    
+    // --- THIS IS THE FIX ---
+    // Decode the content before writing it to the file.
+    const content = decodeHtmlEntities(action.content);
+    // -----------------------
 
     this.logger.info(`Writing file: ${filePath} (${content.length} chars)`);
 
