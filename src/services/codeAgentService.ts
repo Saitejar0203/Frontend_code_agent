@@ -69,10 +69,45 @@ export async function sendChatMessage(userInput: string): Promise<void> {
     let accumulatedText = '';
     let currentMessageId: string | null = null;
     
-    // --- THIS IS THE FIX ---
-    // Create a queue to hold actions until the stream is complete.
-    const actionQueue: Array<{ action: import('@/lib/runtime').BoltAction; artifactId?: string }> = [];
-    // -----------------------
+    // --- COMMAND-DRIVEN BATCHING SYSTEM ---
+    // Queue to hold file actions until a shell command is encountered or stream ends
+    const fileActionQueue: Array<{ action: import('@/lib/runtime').BoltAction; artifactId?: string }> = [];
+    const shellActionQueue: Array<{ action: import('@/lib/runtime').BoltAction; artifactId?: string }> = [];
+    let batchExecutionPromise = Promise.resolve();
+    
+    // Helper function to execute all queued file actions in parallel
+    const executeFileActionBatch = async () => {
+      if (fileActionQueue.length === 0) return;
+      
+      console.log(`📦 Executing batch of ${fileActionQueue.length} file actions in parallel`);
+      const filePromises = fileActionQueue.map(({ action, artifactId }) => {
+        console.log(`📄 Batching file: ${action.filePath} (${action.content.length} chars)`);
+        return actionRunner.runAction(action, artifactId);
+      });
+      
+      // Execute all file actions in parallel
+      await Promise.all(filePromises);
+      console.log(`✅ Completed batch of ${fileActionQueue.length} file actions`);
+      
+      // Clear the file queue
+      fileActionQueue.length = 0;
+    };
+    
+    // Helper function to execute shell actions sequentially
+    const executeShellActionBatch = async () => {
+      if (shellActionQueue.length === 0) return;
+      
+      console.log(`⚡ Executing batch of ${shellActionQueue.length} shell actions sequentially`);
+      for (const { action, artifactId } of shellActionQueue) {
+        console.log(`🔧 Executing shell command: ${action.content}`);
+        await actionRunner.runAction(action, artifactId);
+      }
+      console.log(`✅ Completed batch of ${shellActionQueue.length} shell actions`);
+      
+      // Clear the shell queue
+      shellActionQueue.length = 0;
+    };
+    // -----------------------------------------
     
     // Set up parser callbacks for artifact and action handling
     const parserCallbacks: ParserCallbacks = {
@@ -93,10 +128,32 @@ export async function sendChatMessage(userInput: string): Promise<void> {
         if (artifactId) {
           addActionToArtifact(artifactId, action);
         }
-        // --- THIS IS THE FIX ---
-        // Instead of executing immediately, add the action to our queue.
-        actionQueue.push({ action, artifactId });
-        // -----------------------
+        
+        // --- COMMAND-DRIVEN BATCHING LOGIC ---
+        if (action.type === 'file') {
+          // Queue file actions for batch execution
+          fileActionQueue.push({ action, artifactId });
+          console.log(`📄 Queued file action: ${action.filePath} (queue size: ${fileActionQueue.length})`);
+        } else if (action.type === 'shell') {
+          // When we encounter a shell command, execute all queued file actions first
+          batchExecutionPromise = batchExecutionPromise.then(async () => {
+            // Execute all pending file actions in parallel before this shell command
+            await executeFileActionBatch();
+            
+            // Then queue and execute this shell command
+            shellActionQueue.push({ action, artifactId });
+            console.log(`⚡ Queued shell action: ${action.content} (queue size: ${shellActionQueue.length})`);
+            await executeShellActionBatch();
+          }).catch(error => {
+            console.error('❌ Error in batch execution:', error);
+          });
+        }
+        // ----------------------------------------
+      },
+      onActionContentUpdate: ({ artifactId, messageId, action }) => {
+        console.log(`📝 Action content update: ${action.type}${artifactId ? ` in artifact ${artifactId}` : ''} (${action.content.length} chars)`);
+        // Skip immediate execution to avoid multiple writes to the same file
+        // Actions will be executed only when complete via onActionClose
       }
     };
     
@@ -160,7 +217,7 @@ export async function sendChatMessage(userInput: string): Promise<void> {
         addMessage(errorMessage);
       },
       onComplete: async () => {
-        console.log('✅ Stream completed, finalizing message and executing actions.');
+        console.log('✅ Stream completed, finalizing message and executing remaining actions.');
         console.log('🏁 Final accumulated text length:', accumulatedText.length);
         
         // Finalize the UI message
@@ -175,16 +232,23 @@ export async function sendChatMessage(userInput: string): Promise<void> {
           });
         }
         
-        // --- THIS IS THE FIX ---
-        // Now that the stream is finished and all actions are collected,
-        // execute them sequentially.
-        console.log(`🏃‍♂️ Executing ${actionQueue.length} queued actions...`);
-        for (const item of actionQueue) {
-          // The ActionRunner's internal promise chain will ensure sequential execution.
-          actionRunner.runAction(item.action, item.artifactId);
-        }
-        // -----------------------
+        // --- FINAL BATCH EXECUTION ---
+        // Wait for any ongoing batch execution to complete
+        await batchExecutionPromise;
         
+        // Execute any remaining file actions that weren't triggered by shell commands
+        if (fileActionQueue.length > 0) {
+          console.log(`📦 Executing final batch of ${fileActionQueue.length} remaining file actions`);
+          await executeFileActionBatch();
+        }
+        
+        // Execute any remaining shell actions
+        if (shellActionQueue.length > 0) {
+          console.log(`⚡ Executing final batch of ${shellActionQueue.length} remaining shell actions`);
+          await executeShellActionBatch();
+        }
+        
+        console.log('🎉 All actions completed successfully!');
         console.log('🏁 Final messages count:', chatStore.get().messages.length);
       }
     };

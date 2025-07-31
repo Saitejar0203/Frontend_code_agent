@@ -178,14 +178,23 @@ export function addActionToArtifact(artifactId: string, action: BoltAction) {
   const artifact = currentArtifacts[artifactId];
   
   if (artifact) {
-    workbenchStore.setKey('artifacts', {
-      ...currentArtifacts,
-      [artifactId]: {
-        ...artifact,
-        actions: [...artifact.actions, action],
-        isRunning: true,
-      },
-    });
+    // Filter out mkdir actions from being displayed in the artifact
+    const shouldAddToArtifact = !(
+      action.type === 'shell' && 
+      action.content && 
+      action.content.trim().match(/^mkdir\s+/)
+    );
+    
+    if (shouldAddToArtifact) {
+      workbenchStore.setKey('artifacts', {
+        ...currentArtifacts,
+        [artifactId]: {
+          ...artifact,
+          actions: [...artifact.actions, action],
+          isRunning: true,
+        },
+      });
+    }
   }
 }
 

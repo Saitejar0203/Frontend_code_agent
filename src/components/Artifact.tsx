@@ -72,14 +72,22 @@ export function Artifact({ className = '' }: ArtifactProps) {
         {/* Artifact Tabs */}
         <div className="mt-3 space-y-1">
           {artifactList.map((artifact) => (
-            <button
+            <div
               key={artifact.id}
-              className={`w-full flex items-center justify-between p-2 rounded-lg text-left transition-all duration-200 group ${
+              role="button"
+              tabIndex={0}
+              className={`w-full flex items-center justify-between p-2 rounded-lg text-left transition-all duration-200 group cursor-pointer ${
                 selectedArtifactId === artifact.id 
                   ? 'bg-emerald-50 border border-emerald-200 text-emerald-800' 
                   : 'hover:bg-gray-50 border border-transparent text-gray-700'
               }`}
               onClick={() => selectArtifact(artifact.id)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter' || e.key === ' ') {
+                  e.preventDefault();
+                  selectArtifact(artifact.id);
+                }
+              }}
             >
               <div className="flex items-center space-x-2 flex-1 min-w-0">
                 {artifact.isRunning ? (
@@ -101,7 +109,7 @@ export function Artifact({ className = '' }: ArtifactProps) {
               >
                 <X className="w-3 h-3 text-red-500" />
               </button>
-            </button>
+            </div>
           ))}
         </div>
       </div>

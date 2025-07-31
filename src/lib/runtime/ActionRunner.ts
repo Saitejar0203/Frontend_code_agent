@@ -57,7 +57,9 @@ class ActionRunner {
   #webcontainer: Promise<WebContainer>;
   #isInitialized = false;
   private currentExecutionPromise: Promise<void> = Promise.resolve();
+  private shellExecutionPromise: Promise<void> = Promise.resolve(); // Separate queue for shell commands
   private actions: Map<string, ActionState> = new Map();
+  private pendingFileActions: Set<string> = new Set(); // Track parallel file actions
   private logger = createScopedLogger('ActionRunner');
 
   constructor(webcontainerPromise: Promise<WebContainer>) {
@@ -195,7 +197,48 @@ class ActionRunner {
   }
 
   private executeActionInternal(data: { actionId: string; action: BoltAction; artifactId?: string }) {
-    this.currentExecutionPromise = this.currentExecutionPromise
+    const { actionId, action } = data;
+    
+    if (action.type === 'file') {
+      // Execute file actions in parallel
+      this.executeFileActionParallel(data);
+    } else {
+      // Execute shell actions sequentially
+      this.executeShellActionSequential(data);
+    }
+  }
+
+  private executeFileActionParallel(data: { actionId: string; action: BoltAction; artifactId?: string }) {
+    const { actionId, artifactId } = data;
+    this.pendingFileActions.add(actionId);
+    
+    // Execute file action in parallel - optimized for batch execution
+    this.initialize()
+      .then(async () => {
+        const action = this.actions.get(actionId);
+        if (!action || action.executed) {
+          this.pendingFileActions.delete(actionId);
+          return;
+        }
+
+        this.updateAction(actionId, { ...action, ...data.action, executed: true });
+        await this.executeAction(actionId, artifactId);
+        this.pendingFileActions.delete(actionId);
+        
+        // Log completion for batch tracking
+        this.logger.info(`File action completed: ${action.filePath} (${this.pendingFileActions.size} remaining)`);
+      })
+      .catch((error) => {
+        this.pendingFileActions.delete(actionId);
+        this.logger.error(`File action failed:`, error);
+        if (artifactId) {
+          setArtifactError(artifactId, error instanceof Error ? error.message : 'File action failed');
+        }
+      });
+  }
+
+  private executeShellActionSequential(data: { actionId: string; action: BoltAction; artifactId?: string }) {
+    this.shellExecutionPromise = this.shellExecutionPromise
       .then(async () => {
         const { actionId, artifactId } = data;
         const action = this.actions.get(actionId);
@@ -204,20 +247,44 @@ class ActionRunner {
           return;
         }
 
-        // This now runs safely inside the promise chain
+        // Wait for initialization and any pending file actions that might conflict
         await this.initialize();
+        await this.waitForFileActionsToComplete();
 
+        this.logger.info(`Executing shell command after file batch completion: ${action.content}`);
         this.updateAction(actionId, { ...action, ...data.action, executed: true });
         await this.executeAction(actionId, artifactId);
+        this.logger.info(`Shell command completed: ${action.content}`);
       })
       .catch((error) => {
         const { artifactId } = data;
-        this.logger.error(`Action failed in execution chain:`, error);
+        this.logger.error(`Shell action failed in execution chain:`, error);
         if (artifactId) {
-          setArtifactError(artifactId, error instanceof Error ? error.message : 'Action failed');
+          setArtifactError(artifactId, error instanceof Error ? error.message : 'Shell action failed');
         }
         // We don't re-throw, so one failed action doesn't stop the entire queue
       });
+  }
+
+  private async waitForFileActionsToComplete(): Promise<void> {
+    // Wait for all pending file actions to complete before executing shell commands
+    // This prevents conflicts like shell commands running before required files are written
+    const maxWait = 10000; // 10 seconds max wait (increased for batch operations)
+    const startTime = Date.now();
+    
+    if (this.pendingFileActions.size > 0) {
+      this.logger.info(`Waiting for ${this.pendingFileActions.size} file actions to complete before shell execution`);
+    }
+    
+    while (this.pendingFileActions.size > 0 && (Date.now() - startTime) < maxWait) {
+      await new Promise(resolve => setTimeout(resolve, 100));
+    }
+    
+    if (this.pendingFileActions.size > 0) {
+      this.logger.warn(`Timeout waiting for file actions. ${this.pendingFileActions.size} actions still pending.`);
+    } else {
+      this.logger.info('All file actions completed, proceeding with shell execution');
+    }
   }
 
   public abort(): void {
@@ -425,32 +492,116 @@ class ActionRunner {
     const container = await this.#webcontainer;
     const filePath = action.filePath;
     
-    // --- THIS IS THE FIX ---
-    // Decode the content before writing it to the file.
+    // Decode the content before writing it to the file
     const content = decodeHtmlEntities(action.content);
-    // -----------------------
 
     this.logger.info(`Writing file: ${filePath} (${content.length} chars)`);
 
     try {
-      // Create parent directory if it doesn't exist
-      const dir = filePath.includes('/') ? filePath.substring(0, filePath.lastIndexOf('/')) : '.';
-      if (dir && dir !== '.') {
-        await container.fs.mkdir(dir, { recursive: true });
-      }
+      // Optimized file writing with batch directory creation
+      await this.ensureDirectoryExists(container, filePath);
       
-      await container.fs.writeFile(filePath, content);
+      // Use optimized file writing
+      await this.writeFileOptimized(container, filePath, content);
+      
       appendTerminalOutput(`  ✅ ${filePath}\n`);
       this.logger.info(`File written successfully: ${filePath}`);
       
-      // Update file tree after writing file
-      await this.updateFileTree();
+      // Batch file tree updates to reduce overhead
+      this.scheduleFileTreeUpdate();
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : 'Unknown error';
       this.logger.error(`Failed to write file ${filePath}:`, error);
       appendTerminalOutput(`  ❌ Failed to write ${filePath}: ${errorMessage}\n`);
       throw error;
     }
+  }
+
+  private directoryCache = new Set<string>();
+  private fileTreeUpdateTimeout: NodeJS.Timeout | null = null;
+
+  /**
+   * Optimized directory creation with caching
+   */
+  private async ensureDirectoryExists(container: WebContainer, filePath: string): Promise<void> {
+    const dir = filePath.includes('/') ? filePath.substring(0, filePath.lastIndexOf('/')) : '.';
+    
+    if (dir === '.' || this.directoryCache.has(dir)) {
+      return;
+    }
+
+    try {
+      await container.fs.mkdir(dir, { recursive: true });
+      this.directoryCache.add(dir);
+      
+      // Also cache parent directories
+      let parentDir = dir;
+      while (parentDir.includes('/')) {
+        parentDir = parentDir.substring(0, parentDir.lastIndexOf('/'));
+        this.directoryCache.add(parentDir);
+      }
+    } catch (error) {
+      // Directory might already exist, which is fine
+      this.logger.debug(`Directory creation note for ${dir}:`, error);
+    }
+  }
+
+  /**
+   * Optimized file writing with better error handling
+   */
+  private async writeFileOptimized(container: WebContainer, filePath: string, content: string): Promise<void> {
+    try {
+      // For large files, write in chunks to prevent memory issues
+      if (content.length > 100000) { // 100KB threshold
+        await this.writeFileInChunks(container, filePath, content);
+      } else {
+        await container.fs.writeFile(filePath, content);
+      }
+    } catch (error) {
+      // Retry once if write fails
+      this.logger.warn(`Retrying file write for ${filePath}`);
+      await new Promise(resolve => setTimeout(resolve, 100));
+      await container.fs.writeFile(filePath, content);
+    }
+  }
+
+  /**
+   * Write large files in chunks to prevent memory issues
+   */
+  private async writeFileInChunks(container: WebContainer, filePath: string, content: string): Promise<void> {
+    const chunkSize = 50000; // 50KB chunks
+    let offset = 0;
+    
+    // Clear the file first
+    await container.fs.writeFile(filePath, '');
+    
+    while (offset < content.length) {
+      const chunk = content.slice(offset, offset + chunkSize);
+      
+      if (offset === 0) {
+        await container.fs.writeFile(filePath, chunk);
+      } else {
+        // Append to existing file
+        const existingContent = await container.fs.readFile(filePath, 'utf-8');
+        await container.fs.writeFile(filePath, existingContent + chunk);
+      }
+      
+      offset += chunkSize;
+    }
+  }
+
+  /**
+   * Batch file tree updates to reduce overhead
+   */
+  private scheduleFileTreeUpdate(): void {
+    if (this.fileTreeUpdateTimeout) {
+      clearTimeout(this.fileTreeUpdateTimeout);
+    }
+    
+    this.fileTreeUpdateTimeout = setTimeout(() => {
+      this.updateFileTree();
+      this.fileTreeUpdateTimeout = null;
+    }, 500); // Batch updates every 500ms
   }
 
   private updateAction(id: string, newState: ActionStateUpdate) {

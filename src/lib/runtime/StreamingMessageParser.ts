@@ -31,6 +31,7 @@ export interface ParserCallbacks {
   onArtifactClose?: ArtifactCallback;
   onActionOpen?: ActionCallback;
   onActionClose?: ActionCallback;
+  onActionContentUpdate?: ActionCallback; // New callback for immediate triggering
   onText?: (text: string) => void;
 }
 
@@ -53,6 +54,8 @@ interface MessageState {
   currentAction: { content: string; type?: string; filePath?: string };
   tagBuffer: string;
   actionId: number;
+  lastContentLength: number; // Track content length for immediate triggering
+  contentUpdateThreshold: number; // Minimum content before triggering
 }
 
 export class StreamingMessageParser {
@@ -98,6 +101,8 @@ export class StreamingMessageParser {
         currentAction: { content: '' },
         tagBuffer: '',
         actionId: 0,
+        lastContentLength: 0,
+        contentUpdateThreshold: 50, // Trigger after 50 characters
       };
       this.messages.set(messageId, state);
     }
@@ -115,6 +120,8 @@ export class StreamingMessageParser {
         if (currentText) {
           if (state.insideAction) {
             state.currentAction.content += currentText;
+            // Check for immediate triggering when content is added
+            this.checkForImmediateActionTrigger(messageId, state);
           } else {
             this.callbacks.onText?.(currentText);
           }
@@ -140,6 +147,8 @@ export class StreamingMessageParser {
     if (currentText) {
       if (state.insideAction) {
         state.currentAction.content += currentText;
+        // Check if we should trigger immediate action execution
+        this.checkForImmediateActionTrigger(messageId, state);
       } else {
         this.callbacks.onText?.(currentText);
       }
@@ -184,6 +193,76 @@ export class StreamingMessageParser {
 
   reset() {
     this.messages.clear();
+  }
+
+  /**
+   * Check if action content has reached threshold for immediate triggering
+   */
+  private checkForImmediateActionTrigger(messageId: string, state: MessageState) {
+    if (!state.insideAction || !state.currentAction.type) {
+      return;
+    }
+
+    const currentLength = state.currentAction.content.length;
+    const lengthDiff = currentLength - state.lastContentLength;
+
+    // Only trigger if we've accumulated enough new content
+    if (lengthDiff >= state.contentUpdateThreshold) {
+      state.lastContentLength = currentLength;
+      
+      // For file actions, trigger immediately when we have meaningful content
+      if (state.currentAction.type === 'file' && state.currentAction.filePath && currentLength > 10) {
+        this.callbacks.onActionContentUpdate?.({
+          messageId,
+          artifactId: state.currentArtifact?.id,
+          action: {
+            type: state.currentAction.type as 'file' | 'shell',
+            filePath: state.currentAction.filePath,
+            content: state.currentAction.content,
+          },
+        });
+      }
+      // For shell actions, trigger when we have a complete command line
+      else if (state.currentAction.type === 'shell') {
+        const content = state.currentAction.content.trim();
+        const lines = content.split('\n');
+        const lastLine = lines[lines.length - 1];
+        
+        // Trigger if we have a complete command (ends with newline or looks complete)
+        if (content.includes('\n') || this.looksLikeCompleteCommand(lastLine)) {
+          this.callbacks.onActionContentUpdate?.({
+            messageId,
+            artifactId: state.currentArtifact?.id,
+            action: {
+              type: state.currentAction.type as 'file' | 'shell',
+              content: content,
+            },
+          });
+        }
+      }
+    }
+  }
+
+  /**
+   * Heuristic to determine if a shell command looks complete
+   */
+  private looksLikeCompleteCommand(command: string): boolean {
+    const trimmed = command.trim();
+    if (trimmed.length < 3) return false;
+    
+    // Common complete command patterns
+    const completePatterns = [
+      /^npm\s+(install|start|run|build|test)$/,
+      /^yarn\s+(install|start|dev|build|test)$/,
+      /^pnpm\s+(install|start|dev|build|test)$/,
+      /^git\s+(add|commit|push|pull|clone).*$/,
+      /^mkdir\s+.+$/,
+      /^cd\s+.+$/,
+      /^ls$/,
+      /^pwd$/,
+    ];
+    
+    return completePatterns.some(pattern => pattern.test(trimmed));
   }
 
   private handleArtifactOpen(tag: string, state: MessageState, messageId: string): void {
