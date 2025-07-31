@@ -10,7 +10,7 @@ import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { useStore } from '@nanostores/react';
-import { workbenchStore } from '@/lib/stores/workbenchStore';
+import { workbenchStore, setActiveTab } from '@/lib/stores/workbenchStore';
 import { useTerminalIntegration } from '@/hooks/useTerminalIntegration';
 
 interface WorkbenchLayoutProps {
@@ -39,21 +39,15 @@ export function WorkbenchLayout({ className }: WorkbenchLayoutProps) {
   const [isTerminalCollapsed, setIsTerminalCollapsed] = useState(false);
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false);
   const [activeBottomTab, setActiveBottomTab] = useState('terminal');
-  const [activeMainTab, setActiveMainTab] = useState('files');
   const [terminalCount, setTerminalCount] = useState(1);
   const [activeTerminal, setActiveTerminal] = useState(0);
   
-  const { terminalOutput, artifacts, artifactPanelVisible, hasActivePreview, previews } = useStore(workbenchStore);
+  const { terminalOutput, artifacts, artifactPanelVisible, hasActivePreview, previews, activeTab } = useStore(workbenchStore);
   
   // Initialize terminal integration for preview detection
   const { isReady: isWebContainerReady } = useTerminalIntegration();
 
-  // Auto-switch to preview tab when a preview becomes available
-  useEffect(() => {
-    if (hasActivePreview && previews.length > 0) {
-      setActiveMainTab('preview');
-    }
-  }, [hasActivePreview, previews.length]);
+  // Note: Auto-switch to preview tab is now handled by the global store in Preview.tsx
 
   // Save panel sizes to localStorage when they change
   useEffect(() => {
@@ -140,7 +134,7 @@ export function WorkbenchLayout({ className }: WorkbenchLayoutProps) {
               >
                 <div className="h-full flex flex-col bg-white dark:bg-gray-900">
                   {/* Top Level Tabs */}
-                  <Tabs value={activeMainTab} onValueChange={setActiveMainTab} className="h-full flex flex-col">
+                  <Tabs value={activeTab} onValueChange={setActiveTab} className="h-full flex flex-col">
                     <div className="flex items-center justify-between px-4 py-2 border-b border-gray-200 dark:border-gray-700">
                       <TabsList className="h-8">
                         <TabsTrigger value="files" className="text-xs">
@@ -159,7 +153,7 @@ export function WorkbenchLayout({ className }: WorkbenchLayoutProps) {
                       </TabsList>
                       
                       <div className="flex items-center space-x-1">
-                        {activeMainTab === 'preview' && (
+                        {activeTab === 'preview' && (
                           <Button
                             onClick={() => {
                               // Trigger refresh for preview
@@ -210,7 +204,7 @@ export function WorkbenchLayout({ className }: WorkbenchLayoutProps) {
               </ResizablePanel>
 
               {/* Terminal/Bottom Panel - Only show when not on Preview tab */}
-              {!isTerminalCollapsed && activeMainTab !== 'preview' && (
+              {!isTerminalCollapsed && activeTab !== 'preview' && (
                 <>
                   <ResizableHandle withHandle />
                   <ResizablePanel defaultSize={30} minSize={15} maxSize={60}>

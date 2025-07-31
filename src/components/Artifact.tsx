@@ -40,8 +40,8 @@ export function Artifact({ className = '' }: ArtifactProps) {
       });
       
       if (runningActions.length > 0) {
-        // Scroll to bottom to show the latest running action
-        actionsContainerRef.current.scrollTop = actionsContainerRef.current.scrollHeight;
+        // Scroll to top to show the latest running action (since order is reversed)
+        actionsContainerRef.current.scrollTop = 0;
       }
     }
   };
@@ -127,7 +127,7 @@ export function Artifact({ className = '' }: ArtifactProps) {
       {/* Actions */}
       <div ref={actionsContainerRef} className="flex-1 overflow-y-auto p-3">
         <div className="space-y-2">
-          {displayArtifact.actions.map((action, index) => {
+          {displayArtifact.actions.slice().reverse().map((action, index) => {
             const actionKey = `${action.type}_${action.filePath || action.content}`;
             const actionStatus = actionStatuses.get(actionKey);
             return (

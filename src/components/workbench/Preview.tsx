@@ -116,16 +116,6 @@ export function Preview({ className }: PreviewProps) {
 
       {/* Preview Content */}
       <div className="flex-1 relative">
-        {/* Refresh Button - Top Right Corner */}
-        <Button
-          variant="secondary"
-          size="sm"
-          onClick={handleRefresh}
-          disabled={!currentUrl || isLoading}
-          className="absolute top-3 right-3 z-20 bg-white/90 hover:bg-white border border-gray-300 shadow-md backdrop-blur-sm"
-        >
-          <RefreshCw className={cn('w-4 h-4 text-gray-700', isLoading && 'animate-spin')} />
-        </Button>
         
         {error ? (
           <div className="flex items-center justify-center h-full">
