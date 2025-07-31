@@ -6,14 +6,13 @@ import { Input } from '@/components/ui/input';
 import { useAuth } from '@/contexts/AuthContext';
 import { AuthGuard } from '../components/auth';
 import useMobileDetection from '../components/chat/mobile/useMobileDetection';
-import CodeChatInterface from '../components/code/CodeChatInterface';
-import CodeTabs from '../components/code/CodeTabs';
+import { WorkbenchLayout } from '../components/workbench/WorkbenchLayout';
+import { WebContainerProvider } from '../components/webcontainer/WebContainerProvider';
 
 import { useStore } from '@nanostores/react';
 import { chatStore, clearMessages, setGenerating, type Message } from '@/lib/stores/chatStore';
 import { workbenchStore, setFileTree, clearArtifacts } from '@/lib/stores/workbenchStore';
 import { sendChatMessage } from '@/services/codeAgentService';
-import Artifact from '@/components/Artifact';
 
 // Interfaces moved to service layer - keeping component clean
 
@@ -196,24 +195,11 @@ const CodeAgentChat: React.FC = () => {
             </div>
           </div>
         ) : (
-          /* Split layout with dynamic widths based on artifact panel visibility */
-          <div className="flex-1 flex overflow-hidden">
-            {/* Chat Interface */}
-            <div className={`${isArtifactPanelVisible ? 'w-1/4' : 'w-1/3'} flex-shrink-0`}>
-              <CodeChatInterface onSendMessage={sendChatMessage} />
-            </div>
-            
-            {/* Artifact Panel (when visible) */}
-            {isArtifactPanelVisible && (
-              <div className="w-1/4 border-r border-gray-200">
-                <Artifact />
-              </div>
-            )}
-            
-            {/* Code Tabs */}
-            <div className="flex-1">
-              <CodeTabs />
-            </div>
+          /* Advanced Workbench Layout with resizable panels */
+          <div className="flex-1 overflow-hidden">
+            <WebContainerProvider>
+              <WorkbenchLayout className="h-full" />
+            </WebContainerProvider>
           </div>
         )}
       </div>

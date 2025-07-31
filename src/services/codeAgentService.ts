@@ -3,7 +3,7 @@ import { StreamingMessageParser, ParserCallbacks } from '@/lib/runtime/Streaming
 import { actionRunner } from '@/lib/runtime/ActionRunner';
 import { addMessage, updateMessage, setGenerating, type Message } from '@/lib/stores/chatStore';
 import { chatStore } from '@/lib/stores/chatStore';
-import { addArtifact, addActionToArtifact } from '@/lib/stores/workbenchStore';
+import { addArtifact, addActionToArtifact, addOrUpdateFileFromAction } from '@/lib/stores/workbenchStore';
 
 export interface GenerateProjectRequest {
   messages: Array<{
@@ -124,9 +124,16 @@ export async function sendChatMessage(userInput: string): Promise<void> {
       },
       onActionClose: ({ artifactId, messageId, action }) => {
         console.log(`⚡ Action closed: ${action.type}${artifactId ? ` in artifact ${artifactId}` : ''}`);
+        
         // Add action to artifact in the store if artifactId exists
         if (artifactId) {
           addActionToArtifact(artifactId, action);
+        }
+        
+        // Immediately add file actions to the file explorer
+        if (action.type === 'file' && action.filePath && action.content) {
+          addOrUpdateFileFromAction(action);
+          console.log(`📁 Added file to explorer: ${action.filePath}`);
         }
         
         // --- COMMAND-DRIVEN BATCHING LOGIC ---

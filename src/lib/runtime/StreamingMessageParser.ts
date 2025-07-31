@@ -165,13 +165,20 @@ export class StreamingMessageParser {
     
     } else if (tag.startsWith(ARTIFACT_ACTION_TAG_CLOSE)) {
       if (state.insideAction) {
+        let content = state.currentAction.content.trim();
+        
+        // For shell actions, clean markdown code block syntax
+        if (state.currentAction.type === 'shell') {
+          content = this.cleanShellCommand(content);
+        }
+        
         this.callbacks.onActionClose?.({
           messageId,
           artifactId: state.currentArtifact?.id,
           action: {
             type: state.currentAction.type as 'file' | 'shell',
             filePath: state.currentAction.filePath,
-            content: state.currentAction.content.trim(),
+            content: content,
           },
         });
         state.insideAction = false;
@@ -224,12 +231,15 @@ export class StreamingMessageParser {
       }
       // For shell actions, trigger when we have a complete command line
       else if (state.currentAction.type === 'shell') {
-        const content = state.currentAction.content.trim();
+        let content = state.currentAction.content.trim();
         const lines = content.split('\n');
         const lastLine = lines[lines.length - 1];
         
         // Trigger if we have a complete command (ends with newline or looks complete)
         if (content.includes('\n') || this.looksLikeCompleteCommand(lastLine)) {
+          // Clean the shell command content before triggering
+          content = this.cleanShellCommand(content);
+          
           this.callbacks.onActionContentUpdate?.({
             messageId,
             artifactId: state.currentArtifact?.id,
@@ -241,6 +251,25 @@ export class StreamingMessageParser {
         }
       }
     }
+  }
+
+  /**
+   * Clean shell command content by removing markdown code block syntax
+   */
+  private cleanShellCommand(content: string): string {
+    let cleaned = content.trim();
+    
+    // Remove markdown code block syntax
+    // Remove opening code block (```bash, ```sh, ```shell, etc.)
+    cleaned = cleaned.replace(/^```\w*\s*\n?/gm, '');
+    
+    // Remove closing code block
+    cleaned = cleaned.replace(/\n?```\s*$/gm, '');
+    
+    // Remove any remaining backticks at start/end
+    cleaned = cleaned.replace(/^`+|`+$/g, '');
+    
+    return cleaned.trim();
   }
 
   /**

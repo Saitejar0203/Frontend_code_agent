@@ -21,6 +21,14 @@ export interface ArtifactState {
   error?: string;
 }
 
+// Preview interfaces
+export interface PreviewInfo {
+  port: number;
+  url: string;
+  ready: boolean;
+  baseUrl: string;
+}
+
 // Unified workbench state
 export interface WorkbenchState {
   // Terminal and preview
@@ -30,6 +38,11 @@ export interface WorkbenchState {
   activeTab: 'files' | 'preview' | 'terminal';
   isWebContainerReady: boolean;
   runningCommands: string[];
+  
+  // Preview system
+  previews: PreviewInfo[];
+  activePreviewIndex: number;
+  hasActivePreview: boolean;
   
   // File system
   fileTree: FileNode[];
@@ -51,6 +64,11 @@ export const workbenchStore = map<WorkbenchState>({
   activeTab: 'files',
   isWebContainerReady: false,
   runningCommands: [],
+  
+  // Preview system
+  previews: [],
+  activePreviewIndex: 0,
+  hasActivePreview: false,
   
   // File system
   fileTree: [],
@@ -106,6 +124,63 @@ export function removeRunningCommand(command: string) {
 
 export function clearRunningCommands() {
   workbenchStore.setKey('runningCommands', []);
+}
+
+// =============================================================================
+// PREVIEW ACTIONS
+// =============================================================================
+
+export function addPreview(preview: PreviewInfo) {
+  const currentPreviews = workbenchStore.get().previews;
+  const existingIndex = currentPreviews.findIndex(p => p.port === preview.port);
+  
+  if (existingIndex >= 0) {
+    // Update existing preview
+    const updatedPreviews = [...currentPreviews];
+    updatedPreviews[existingIndex] = preview;
+    workbenchStore.setKey('previews', updatedPreviews);
+  } else {
+    // Add new preview
+    workbenchStore.setKey('previews', [...currentPreviews, preview]);
+  }
+  
+  workbenchStore.setKey('hasActivePreview', true);
+  
+  // Auto-switch to preview tab when first preview becomes ready
+  if (preview.ready && currentPreviews.length === 0) {
+    workbenchStore.setKey('activeTab', 'preview');
+  }
+}
+
+export function removePreview(port: number) {
+  const currentPreviews = workbenchStore.get().previews;
+  const updatedPreviews = currentPreviews.filter(p => p.port !== port);
+  workbenchStore.setKey('previews', updatedPreviews);
+  workbenchStore.setKey('hasActivePreview', updatedPreviews.length > 0);
+  
+  // Reset active preview index if needed
+  const activeIndex = workbenchStore.get().activePreviewIndex;
+  if (activeIndex >= updatedPreviews.length) {
+    workbenchStore.setKey('activePreviewIndex', Math.max(0, updatedPreviews.length - 1));
+  }
+}
+
+export function setActivePreviewIndex(index: number) {
+  workbenchStore.setKey('activePreviewIndex', index);
+}
+
+export function updatePreviewReady(port: number, ready: boolean) {
+  const currentPreviews = workbenchStore.get().previews;
+  const updatedPreviews = currentPreviews.map(p => 
+    p.port === port ? { ...p, ready } : p
+  );
+  workbenchStore.setKey('previews', updatedPreviews);
+}
+
+export function clearPreviews() {
+  workbenchStore.setKey('previews', []);
+  workbenchStore.setKey('hasActivePreview', false);
+  workbenchStore.setKey('activePreviewIndex', 0);
 }
 
 // =============================================================================
@@ -194,6 +269,11 @@ export function addActionToArtifact(artifactId: string, action: BoltAction) {
           isRunning: true,
         },
       });
+      
+      // If this is a file action, automatically add it to the file tree
+      if (action.type === 'file' && action.filePath && action.content) {
+        addOrUpdateFileFromAction(action);
+      }
     }
   }
 }
@@ -267,6 +347,94 @@ export function clearArtifacts() {
 // =============================================================================
 // HELPER FUNCTIONS
 // =============================================================================
+
+// Convert artifact action to file tree node and add/update in file tree
+export function addOrUpdateFileFromAction(action: BoltAction) {
+  if (action.type !== 'file' || !action.filePath || !action.content) {
+    return;
+  }
+
+  const currentFiles = workbenchStore.get().fileTree;
+  const updatedFiles = addOrUpdateFileInTree(currentFiles, action.filePath, action.content);
+  workbenchStore.setKey('fileTree', updatedFiles);
+}
+
+// Add or update a file in the file tree, creating necessary folder structure
+function addOrUpdateFileInTree(files: FileNode[], filePath: string, content: string): FileNode[] {
+  // Normalize the file path - remove leading/trailing slashes and handle backslashes
+  const normalizedPath = filePath.replace(/\\/g, '/').replace(/^\/+|\/+$/g, '');
+  
+  if (!normalizedPath) {
+    return files;
+  }
+  
+  const pathParts = normalizedPath.split('/').filter(part => part.length > 0);
+  
+  if (pathParts.length === 0) {
+    return files;
+  }
+
+  const [currentPart, ...remainingParts] = pathParts;
+  const isFile = remainingParts.length === 0;
+  
+  // Find existing node with the current part name
+  const existingIndex = files.findIndex(file => file.name === currentPart);
+  
+  if (existingIndex !== -1) {
+    // Node exists, update it
+    const existingNode = files[existingIndex];
+    
+    if (isFile) {
+      // Update file content
+      const updatedFiles = [...files];
+      updatedFiles[existingIndex] = {
+        ...existingNode,
+        content,
+        type: 'file',
+        path: normalizedPath
+      };
+      return updatedFiles;
+    } else {
+      // Continue traversing into folder
+      const updatedFiles = [...files];
+      const folderPath = pathParts.slice(0, pathParts.length - remainingParts.length).join('/');
+      updatedFiles[existingIndex] = {
+        ...existingNode,
+        type: 'folder',
+        path: folderPath,
+        children: addOrUpdateFileInTree(
+          existingNode.children || [],
+          remainingParts.join('/'),
+          content
+        )
+      };
+      return updatedFiles;
+    }
+  } else {
+    // Node doesn't exist, create it
+    if (isFile) {
+      // Create new file
+      const newFile: FileNode = {
+        name: currentPart,
+        type: 'file',
+        path: normalizedPath,
+        content
+      };
+      return [...files, newFile];
+    } else {
+      // Create new folder and continue
+      const folderPath = pathParts.slice(0, pathParts.length - remainingParts.length).join('/');
+      const newFolder: FileNode = {
+        name: currentPart,
+        type: 'folder',
+        path: folderPath || currentPart,
+        children: addOrUpdateFileInTree([], remainingParts.join('/'), content),
+        isExpanded: true // Auto-expand new folders
+      };
+      return [...files, newFolder];
+    }
+  }
+}
 
 function updateFileInTree(files: FileNode[], targetPath: string, content: string): FileNode[] {
   return files.map(file => {
