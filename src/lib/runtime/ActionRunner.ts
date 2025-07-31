@@ -272,6 +272,39 @@ class ActionRunner {
     }
   }
 
+  private isDevServerCommand(commandString: string): boolean {
+    const devServerPatterns = [
+      /^npm\s+(start|run\s+dev|run\s+serve)$/,
+      /^yarn\s+(start|dev|serve)$/,
+      /^pnpm\s+(start|dev|serve)$/,
+      /^bun\s+(start|dev|serve)$/,
+      /^npx\s+vite$/,
+      /^npx\s+webpack-dev-server$/,
+      /^npx\s+next\s+dev$/,
+      /^python\s+-m\s+http\.server$/,
+      /^python3\s+-m\s+http\.server$/
+    ];
+    
+    return devServerPatterns.some(pattern => pattern.test(commandString.trim()));
+  }
+
+  private isServerReadyOutput(output: string): boolean {
+    const serverReadyPatterns = [
+      /Server ready at/i,
+      /Local:\s+https?:\/\//i,
+      /Network:\s+https?:\/\//i,
+      /ready on/i,
+      /running at/i,
+      /listening on/i,
+      /started server on/i,
+      /dev server running at/i,
+      /vite.*ready in/i,
+      /webpack.*compiled successfully/i
+    ];
+    
+    return serverReadyPatterns.some(pattern => pattern.test(output));
+  }
+
   private async runShellAction(action: ActionState) {
     if (action.type !== 'shell') {
       this.logger.error('Expected shell action');
@@ -289,6 +322,9 @@ class ActionRunner {
     this.logger.info(`Executing shell command: ${command}`, args);
     appendTerminalOutput(`$ ${commandString}\n`);
     addRunningCommand(commandString);
+
+    const isDevServer = this.isDevServerCommand(commandString);
+    let serverReady = false;
 
     try {
       // --- START OF FIX ---
@@ -308,14 +344,44 @@ class ActionRunner {
       });
 
       let output = '';
+      let actionCompleted = false;
+      
       process.output.pipeTo(
         new WritableStream({
-          write(data) {
+          write: (data) => {
             output += data;
             appendTerminalOutput(data);
+            
+            // For dev servers, check if server is ready
+            if (isDevServer && !serverReady && !actionCompleted && this.isServerReadyOutput(data)) {
+              serverReady = true;
+              actionCompleted = true;
+              this.logger.info(`Development server ready: ${commandString}`);
+              appendTerminalOutput(`\n✅ Development server ready\n`);
+              
+              // Don't wait for process exit for dev servers
+              setTimeout(() => {
+                if (!action.abortSignal.aborted) {
+                  // Mark action as complete without waiting for process exit
+                  removeRunningCommand(commandString);
+                }
+              }, 100);
+            }
           },
         }),
       );
+
+      if (isDevServer) {
+        // For dev servers, wait a bit for startup, then return if server is ready
+        await new Promise(resolve => setTimeout(resolve, 3000));
+        
+        if (serverReady && !action.abortSignal.aborted) {
+          this.logger.info(`Development server started successfully: ${commandString}`);
+          return; // Don't wait for exit
+        }
+        
+        // If server didn't start in 3 seconds, continue with normal flow
+      }
 
       const exitCode = await process.exit;
       
@@ -339,7 +405,9 @@ class ActionRunner {
       appendTerminalOutput(`\n❌ Command failed: ${errorMessage}\n`);
       throw error;
     } finally {
-      removeRunningCommand(commandString);
+      if (!isDevServer || !serverReady) {
+        removeRunningCommand(commandString);
+      }
     }
   }
 

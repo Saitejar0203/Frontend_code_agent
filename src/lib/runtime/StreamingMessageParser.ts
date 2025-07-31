@@ -105,93 +105,83 @@ export class StreamingMessageParser {
   }
 
   private processChunk(messageId: string, state: MessageState, chunk: string) {
-    let currentContent = state.tagBuffer + chunk;
-    state.tagBuffer = '';
+    let currentText = '';
 
-    // Loop until the entire chunk has been processed
-    while (currentContent.length > 0) {
-      if (state.insideAction) {
-        const endActionIndex = currentContent.indexOf(ARTIFACT_ACTION_TAG_CLOSE);
-        if (endActionIndex !== -1) {
-          // *** THE FINAL FIX IS HERE ***
-          // The content is ONLY the text from the start of the chunk up to the closing tag.
-          const content = currentContent.substring(0, endActionIndex);
-          state.currentAction.content += content; // Append this part of the content
+    for (let i = 0; i < chunk.length; i++) {
+      const char = chunk[i];
 
-          this.callbacks.onActionClose?.({
-            messageId,
-            artifactId: state.currentArtifact?.id,
-            action: {
-              type: state.currentAction.type as 'file' | 'shell',
-              filePath: state.currentAction.filePath,
-              // Use trim() on the final accumulated content to remove whitespace.
-              content: state.currentAction.content.trim(),
-            },
-          });
-
-          state.insideAction = false;
-          state.currentAction = { content: '' };
-          currentContent = currentContent.substring(endActionIndex + ARTIFACT_ACTION_TAG_CLOSE.length);
-        } else {
-          // The entire rest of the chunk is part of the content
-          state.currentAction.content += currentContent;
-          currentContent = '';
-        }
-      } else { // We are outside an action, look for text or a new tag
-        const tagStartIndex = currentContent.indexOf('<');
-
-        if (tagStartIndex === -1) {
-          // No more tags in the chunk, the rest is text
-          if (currentContent) this.callbacks.onText?.(currentContent);
-          break; // Exit the loop
-        }
-
-        // Process any text before the tag
-        const text = currentContent.substring(0, tagStartIndex);
-        if (text) {
-          this.callbacks.onText?.(text);
-        }
-
-        const tagEndIndex = currentContent.indexOf('>', tagStartIndex);
-
-        if (tagEndIndex === -1) {
-          // The tag is incomplete, buffer it and wait for the next chunk
-          state.tagBuffer = currentContent.substring(tagStartIndex);
-          break; // Exit the loop
-        }
-
-        // A full tag has been found
-        const tag = currentContent.substring(tagStartIndex, tagEndIndex + 1);
-        
-        // Identify and handle the tag
-        if (tag.startsWith(ARTIFACT_ACTION_TAG_OPEN)) {
-          state.insideAction = true;
-          const action = this.parseActionTag(tag, 0, tag.length - 1);
-          state.currentAction = { ...action, content: '' }; // Reset content here
-          this.callbacks.onActionOpen?.({ messageId, artifactId: state.currentArtifact?.id, action: state.currentAction as BoltAction });
-        } else if (tag.startsWith(ARTIFACT_TAG_OPEN)) {
-          this.handleArtifactOpen(tag, state, messageId);
-        } else if (tag.startsWith(ARTIFACT_TAG_CLOSE)) {
-          this.handleArtifactClose(state, messageId);
-        } else if (tag.startsWith(ARTIFACT_ACTION_TAG_CLOSE)) {
+      if (char === '<' && state.tagBuffer.length === 0) {
+        // A new tag is starting. First, emit any plain text we've collected.
+        if (currentText) {
           if (state.insideAction) {
-            this.callbacks.onActionClose?.({
-              messageId,
-              artifactId: state.currentArtifact?.id,
-              action: {
-                type: state.currentAction.type as 'file' | 'shell',
-                filePath: state.currentAction.filePath,
-                content: state.currentAction.content.trim(),
-              },
-            });
-            state.insideAction = false;
-            state.currentAction = { content: '' };
+            state.currentAction.content += currentText;
+          } else {
+            this.callbacks.onText?.(currentText);
           }
+          currentText = '';
         }
-        currentContent = currentContent.substring(tagEndIndex + 1);
+        // Start buffering the new tag
+        state.tagBuffer = '<';
+      } else if (char === '>' && state.tagBuffer.length > 0) {
+        // End of a tag
+        state.tagBuffer += '>';
+        this.processTag(messageId, state, state.tagBuffer);
+        state.tagBuffer = ''; // Reset buffer after processing
+      } else if (state.tagBuffer.length > 0) {
+        // We are inside a tag, keep buffering
+        state.tagBuffer += char;
+      } else {
+        // Not in a tag, accumulate as plain text
+        currentText += char;
+      }
+    }
+
+    // After the loop, handle any remaining plain text
+    if (currentText) {
+      if (state.insideAction) {
+        state.currentAction.content += currentText;
+      } else {
+        this.callbacks.onText?.(currentText);
       }
     }
   }
+
+  // Add this new method inside the StreamingMessageParser class
+  private processTag(messageId: string, state: MessageState, tag: string) {
+    if (tag.startsWith(ARTIFACT_ACTION_TAG_OPEN)) {
+      state.insideAction = true;
+      const action = this.parseActionTag(tag, 0, tag.length - 1);
+      state.currentAction = { ...action, content: '' }; // Set new action state
+      this.callbacks.onActionOpen?.({ messageId, artifactId: state.currentArtifact?.id, action: state.currentAction as BoltAction });
+    
+    } else if (tag.startsWith(ARTIFACT_ACTION_TAG_CLOSE)) {
+      if (state.insideAction) {
+        this.callbacks.onActionClose?.({
+          messageId,
+          artifactId: state.currentArtifact?.id,
+          action: {
+            type: state.currentAction.type as 'file' | 'shell',
+            filePath: state.currentAction.filePath,
+            content: state.currentAction.content.trim(),
+          },
+        });
+        state.insideAction = false;
+        state.currentAction = { content: '' }; // Reset state
+      }
+    } else if (tag.startsWith(ARTIFACT_TAG_OPEN)) {
+      this.handleArtifactOpen(tag, state, messageId);
+    } else if (tag.startsWith(ARTIFACT_TAG_CLOSE)) {
+      this.handleArtifactClose(state, messageId);
+    } else {
+      // This wasn't a bolt tag, treat it as plain text.
+      if (state.insideAction) {
+        state.currentAction.content += tag;
+      } else {
+        this.callbacks.onText?.(tag);
+      }
+    }
+  }
+
   reset() {
     this.messages.clear();
   }

@@ -3,6 +3,7 @@ import { StreamingMessageParser, ParserCallbacks } from '@/lib/runtime/Streaming
 import { actionRunner } from '@/lib/runtime/ActionRunner';
 import { addMessage, updateMessage, setGenerating, type Message } from '@/lib/stores/chatStore';
 import { chatStore } from '@/lib/stores/chatStore';
+import { addArtifact, addActionToArtifact } from '@/lib/stores/workbenchStore';
 
 export interface GenerateProjectRequest {
   messages: Array<{
@@ -77,6 +78,8 @@ export async function sendChatMessage(userInput: string): Promise<void> {
     const parserCallbacks: ParserCallbacks = {
       onArtifactOpen: ({ messageId, id, title }) => {
         console.log(`📦 Artifact opened: ${id} - ${title}`);
+        // Create the artifact in the workbench store to make it visible
+        addArtifact(id, title);
       },
       onArtifactClose: ({ messageId, id, title }) => {
         console.log(`📦 Artifact closed: ${id} - ${title}`);
@@ -86,6 +89,10 @@ export async function sendChatMessage(userInput: string): Promise<void> {
       },
       onActionClose: ({ artifactId, messageId, action }) => {
         console.log(`⚡ Action closed: ${action.type}${artifactId ? ` in artifact ${artifactId}` : ''}`);
+        // Add action to artifact in the store if artifactId exists
+        if (artifactId) {
+          addActionToArtifact(artifactId, action);
+        }
         // --- THIS IS THE FIX ---
         // Instead of executing immediately, add the action to our queue.
         actionQueue.push({ action, artifactId });
