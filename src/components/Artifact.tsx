@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { useStore } from '@nanostores/react';
 import { workbenchStore, selectArtifact, removeArtifact } from '../lib/stores/workbenchStore';
 import type { ArtifactState } from '../lib/stores/workbenchStore';
@@ -25,9 +25,26 @@ interface ArtifactProps {
 export function Artifact({ className = '' }: ArtifactProps) {
   const { artifacts, selectedArtifactId } = useStore(workbenchStore);
   const [actionStatuses, setActionStatuses] = useState<Map<string, any>>(new Map());
+  const actionsContainerRef = useRef<HTMLDivElement>(null);
   
   const artifactList = Object.values(artifacts);
   const selectedArtifact = selectedArtifactId ? artifacts[selectedArtifactId] : null;
+
+  // Auto-scroll to running actions
+  const scrollToRunningAction = () => {
+    if (actionsContainerRef.current && selectedArtifact) {
+      const runningActions = selectedArtifact.actions.filter((action, index) => {
+        const actionKey = `${action.type}_${action.filePath || action.content}`;
+        const status = actionStatuses.get(actionKey);
+        return status && status.status === 'running';
+      });
+      
+      if (runningActions.length > 0) {
+        // Scroll to bottom to show the latest running action
+        actionsContainerRef.current.scrollTop = actionsContainerRef.current.scrollHeight;
+      }
+    }
+  };
 
   // Poll for action status updates
   useEffect(() => {
@@ -35,23 +52,33 @@ export function Artifact({ className = '' }: ArtifactProps) {
       if (actionRunner) {
         const allStatuses = actionRunner.getAllActionStatuses();
         const statusMap = new Map();
+        const previousStatuses = new Map(actionStatuses);
+        
         allStatuses.forEach(status => {
           const key = `${status.type}_${status.filePath || status.content}`;
           statusMap.set(key, status);
         });
+        
         setActionStatuses(statusMap);
+        
+        // Check if any action just started running
+        const hasNewRunningAction = Array.from(statusMap.entries()).some(([key, status]) => {
+          const previousStatus = previousStatuses.get(key);
+          return status.status === 'running' && (!previousStatus || previousStatus.status !== 'running');
+        });
+        
+        if (hasNewRunningAction) {
+          setTimeout(scrollToRunningAction, 100); // Small delay to ensure DOM is updated
+        }
       }
     }, 500); // Update every 500ms
 
     return () => clearInterval(interval);
-  }, []);
+  }, [actionStatuses, selectedArtifact]);
 
   if (artifactList.length === 0) {
     return (
       <div className={`h-full bg-white border-l border-gray-200 flex flex-col ${className}`}>
-        <div className="p-4 border-b border-gray-200">
-          <h3 className="text-lg font-semibold text-gray-800">Artifacts</h3>
-        </div>
         <div className="flex-1 flex items-center justify-center p-6">
           <div className="text-center text-gray-500">
             <FileText className="w-12 h-12 mx-auto mb-3 text-gray-300" />
@@ -63,104 +90,57 @@ export function Artifact({ className = '' }: ArtifactProps) {
     );
   }
 
-  return (
-    <div className={`h-full bg-white border-l border-gray-200 flex flex-col ${className}`}>
-      {/* Header */}
-      <div className="p-4 border-b border-gray-200">
-        <h3 className="text-lg font-semibold text-gray-800">Artifacts</h3>
-        
-        {/* Artifact Tabs */}
-        <div className="mt-3 space-y-1">
-          {artifactList.map((artifact) => (
-            <div
-              key={artifact.id}
-              role="button"
-              tabIndex={0}
-              className={`w-full flex items-center justify-between p-2 rounded-lg text-left transition-all duration-200 group cursor-pointer ${
-                selectedArtifactId === artifact.id 
-                  ? 'bg-emerald-50 border border-emerald-200 text-emerald-800' 
-                  : 'hover:bg-gray-50 border border-transparent text-gray-700'
-              }`}
-              onClick={() => selectArtifact(artifact.id)}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter' || e.key === ' ') {
-                  e.preventDefault();
-                  selectArtifact(artifact.id);
-                }
-              }}
-            >
-              <div className="flex items-center space-x-2 flex-1 min-w-0">
-                {artifact.isRunning ? (
-                  <Loader2 className="w-4 h-4 animate-spin text-emerald-600" />
-                ) : artifact.error ? (
-                  <AlertCircle className="w-4 h-4 text-red-500" />
-                ) : (
-                  <CheckCircle className="w-4 h-4 text-green-500" />
-                )}
-                <span className="text-sm font-medium truncate">{artifact.title}</span>
-              </div>
-              
-              <button
-                className="opacity-0 group-hover:opacity-100 p-1 hover:bg-red-100 rounded transition-all duration-200"
-                onClick={(e) => {
-                  e.stopPropagation();
-                  removeArtifact(artifact.id);
-                }}
-              >
-                <X className="w-3 h-3 text-red-500" />
-              </button>
-            </div>
-          ))}
+  // Auto-select the first artifact if none is selected
+  const displayArtifact = selectedArtifact || artifactList[0];
+  
+  if (!displayArtifact) {
+    return (
+      <div className={`h-full bg-white border-r border-gray-200 flex flex-col ${className}`}>
+        <div className="flex-1 flex items-center justify-center p-6">
+          <div className="text-center text-gray-500">
+            <FileText className="w-12 h-12 mx-auto mb-3 text-gray-300" />
+            <p className="text-sm">No artifact selected</p>
+          </div>
         </div>
       </div>
-      
-      {/* Content */}
-      {selectedArtifact && (
-        <div className="flex-1 overflow-hidden flex flex-col">
-          {/* Artifact Info */}
-          <div className="p-4 border-b border-gray-100">
-            <h4 className="font-medium text-gray-800 mb-2">{selectedArtifact.title}</h4>
-            {selectedArtifact.error && (
-              <div className="bg-red-50 border border-red-200 rounded-lg p-3">
-                <div className="flex items-start space-x-2">
-                  <AlertCircle className="w-4 h-4 text-red-500 mt-0.5 flex-shrink-0" />
-                  <div>
-                    <p className="text-sm font-medium text-red-800">Error</p>
-                    <p className="text-sm text-red-700 mt-1">{selectedArtifact.error}</p>
-                  </div>
-                </div>
-              </div>
-            )}
-          </div>
-          
-          {/* Actions */}
-          <div className="flex-1 overflow-y-auto">
-            <div className="p-4">
-              <div className="flex items-center justify-between mb-3">
-                <h5 className="text-sm font-medium text-gray-700">Actions</h5>
-                <span className="text-xs text-gray-500 bg-gray-100 px-2 py-1 rounded-full">
-                  {selectedArtifact.actions.length}
-                </span>
-              </div>
-              
-              <div className="space-y-2">
-                {selectedArtifact.actions.map((action, index) => {
-                  const actionKey = `${action.type}_${action.filePath || action.content}`;
-                  const actionStatus = actionStatuses.get(actionKey);
-                  return (
-                    <ActionItem 
-                      key={index} 
-                      action={action} 
-                      index={index} 
-                      status={actionStatus}
-                    />
-                  );
-                })}
+    );
+  }
+
+  return (
+    <div className={`h-full bg-white border-r border-gray-200 flex flex-col ${className}`}>
+      {/* Artifact Name */}
+      <div className="p-3 border-b border-gray-100">
+        <h4 className="text-sm font-medium text-gray-800">{displayArtifact.title}</h4>
+        {displayArtifact.error && (
+          <div className="bg-red-50 border border-red-200 rounded-lg p-3 mt-2">
+            <div className="flex items-start space-x-2">
+              <AlertCircle className="w-4 h-4 text-red-500 mt-0.5 flex-shrink-0" />
+              <div>
+                <p className="text-sm font-medium text-red-800">Error</p>
+                <p className="text-sm text-red-700 mt-1">{displayArtifact.error}</p>
               </div>
             </div>
           </div>
+        )}
+      </div>
+      
+      {/* Actions */}
+      <div ref={actionsContainerRef} className="flex-1 overflow-y-auto p-3">
+        <div className="space-y-2">
+          {displayArtifact.actions.map((action, index) => {
+            const actionKey = `${action.type}_${action.filePath || action.content}`;
+            const actionStatus = actionStatuses.get(actionKey);
+            return (
+              <ActionItem 
+                key={index} 
+                action={action} 
+                index={index} 
+                status={actionStatus}
+              />
+            );
+          })}
         </div>
-      )}
+      </div>
     </div>
   );
 }

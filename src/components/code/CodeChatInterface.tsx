@@ -69,22 +69,6 @@ const CodeChatInterface: React.FC<CodeChatInterfaceProps> = ({
 
   return (
     <div className={`h-full flex flex-col bg-white dark:bg-gray-900 ${className}`}>
-      {/* Chat Header */}
-      <div className="px-4 py-3 border-b border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800">
-        <div className="flex items-center justify-between">
-          <div>
-            <h3 className="text-lg font-semibold text-gray-800 dark:text-white">Code Agent</h3>
-            <p className="text-sm text-gray-600 dark:text-gray-400">Powered by Gemini 2.5 Flash</p>
-          </div>
-          <button
-            onClick={handleClear}
-            className="px-3 py-1 text-xs bg-gray-500 text-white rounded hover:bg-gray-600 transition-colors"
-          >
-            Clear
-          </button>
-        </div>
-      </div>
-
       {/* Messages Area */}
       <div className="flex-1 overflow-y-auto p-4 space-y-4">
         {messages.length === 0 ? (

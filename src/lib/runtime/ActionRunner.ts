@@ -56,11 +56,15 @@ export type ActionStateUpdate =
 class ActionRunner {
   #webcontainer: Promise<WebContainer>;
   #isInitialized = false;
-  private currentExecutionPromise: Promise<void> = Promise.resolve();
-  private shellExecutionPromise: Promise<void> = Promise.resolve(); // Separate queue for shell commands
   private actions: Map<string, ActionState> = new Map();
-  private pendingFileActions: Set<string> = new Set(); // Track parallel file actions
   private logger = createScopedLogger('ActionRunner');
+  
+  // New internal queuing system
+  private fileActionQueue: BoltAction[] = [];
+  private shellActionQueue: BoltAction[] = [];
+  private isProcessing = false;
+  private actionIdMap: Map<BoltAction, string> = new Map(); // Track action IDs
+  private artifactIdMap: Map<BoltAction, string> = new Map(); // Track artifact IDs
 
   constructor(webcontainerPromise: Promise<WebContainer>) {
     this.#webcontainer = webcontainerPromise;
@@ -121,22 +125,40 @@ class ActionRunner {
   public runAction(action: BoltAction, artifactId?: string): string {
     const actionId = `${action.type}_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
     
-    const actionData = {
-      actionId,
-      action,
-      artifactId
-    };
-
-    if (action.type === 'file' && action.filePath) {
-      this.logger.info(`Creating file: ${action.filePath} (${action.content.length} chars)`);
-      appendTerminalOutput(`📄 Creating file: ${action.filePath} (${action.content.length} chars)\n`);
-    } else if (action.type === 'shell') {
-      this.logger.info(`Executing command: ${action.content}`);
-      appendTerminalOutput(`⚡ Executing command: ${action.content}\n`);
+    // Store action and artifact IDs for tracking
+    this.actionIdMap.set(action, actionId);
+    if (artifactId) {
+      this.artifactIdMap.set(action, artifactId);
     }
 
-    this.addAction(actionData);
-    this.executeActionInternal(actionData);
+    if (action.type === 'file' && action.filePath) {
+      this.logger.info(`Queuing file: ${action.filePath} (${action.content.length} chars)`);
+      appendTerminalOutput(`📄 Queuing file: ${action.filePath} (${action.content.length} chars)\n`);
+      this.fileActionQueue.push(action);
+    } else if (action.type === 'shell') {
+      this.logger.info(`Queuing command: ${action.content}`);
+      appendTerminalOutput(`⚡ Queuing command: ${action.content}\n`);
+      this.shellActionQueue.push(action);
+    }
+
+    // Add action to the actions map for tracking
+    const abortController = new AbortController();
+    this.actions.set(actionId, {
+      ...action,
+      status: 'pending',
+      executed: false,
+      abort: () => {
+        abortController.abort();
+        this.updateAction(actionId, { status: 'aborted' });
+        if (artifactId) {
+          setArtifactRunning(artifactId, false);
+        }
+      },
+      abortSignal: abortController.signal,
+    });
+
+    // Trigger the processing loop, but don't wait for it
+    this.processQueues();
     
     return actionId;
   }
@@ -162,128 +184,129 @@ class ActionRunner {
     }, artifactId);
   }
 
-  public addAction(data: { actionId: string; action: BoltAction; artifactId?: string }) {
-    const { actionId, artifactId } = data;
+  /**
+   * Core queue processor - ensures only one batch of operations runs at a time
+   * and that files are always written before shell commands
+   */
+  private async processQueues(): Promise<void> {
+    if (this.isProcessing) {
+      return; // Already processing, new actions will be picked up
+    }
+    this.isProcessing = true;
 
-    const action = this.actions.get(actionId);
+    try {
+      // As long as there are actions, keep processing
+      while (this.fileActionQueue.length > 0 || this.shellActionQueue.length > 0) {
+        
+        // 1. Process all pending file actions in parallel
+        if (this.fileActionQueue.length > 0) {
+          const filesToProcess = [...this.fileActionQueue];
+          this.fileActionQueue = []; // Clear the queue immediately
+          
+          console.log(`📦 Executing batch of ${filesToProcess.length} file actions.`);
+          await this.executeFileBatch(filesToProcess);
+        }
 
-    if (action) {
-      // action already added
+        // 2. Process one shell command (sequentially)
+        if (this.shellActionQueue.length > 0) {
+          const commandToProcess = this.shellActionQueue.shift()!; // Get the next command
+          
+          console.log(`⚡ Executing shell command: ${commandToProcess.content}`);
+          await this.runShellActionFromQueue(commandToProcess);
+        }
+      }
+    } catch (error) {
+      console.error('❌ Error during queue processing:', error);
+    } finally {
+      this.isProcessing = false; // Release the lock
+    }
+  }
+
+  private async executeFileBatch(actions: BoltAction[]): Promise<void> {
+    const filePromises = actions.map(action => this.runFileActionFromQueue(action));
+    await Promise.all(filePromises);
+    console.log(`✅ Completed file action batch.`);
+  }
+
+  private async runFileActionFromQueue(action: BoltAction): Promise<void> {
+    const actionId = this.actionIdMap.get(action);
+    const artifactId = this.artifactIdMap.get(action);
+    
+    if (!actionId) {
+      this.logger.error('Action ID not found for file action');
       return;
     }
 
-    const abortController = new AbortController();
+    try {
+      await this.initialize();
+      
+      const actionState = this.actions.get(actionId);
+      if (!actionState || actionState.executed || actionState.abortSignal.aborted) {
+        return;
+      }
 
-    this.actions.set(actionId, {
-      ...data.action,
-      status: 'pending',
-      executed: false,
-      abort: () => {
-        abortController.abort();
-        this.updateAction(actionId, { status: 'aborted' });
-        if (artifactId) {
-          setArtifactRunning(artifactId, false);
-        }
-      },
-      abortSignal: abortController.signal,
-    });
-
-    this.currentExecutionPromise.then(() => {
       this.updateAction(actionId, { status: 'running' });
       if (artifactId) {
         setArtifactRunning(artifactId, true);
       }
-    });
-  }
 
-  private executeActionInternal(data: { actionId: string; action: BoltAction; artifactId?: string }) {
-    const { actionId, action } = data;
-    
-    if (action.type === 'file') {
-      // Execute file actions in parallel
-      this.executeFileActionParallel(data);
-    } else {
-      // Execute shell actions sequentially
-      this.executeShellActionSequential(data);
+      this.logger.info(`Executing file action: ${action.filePath}`);
+      await this.runFileAction(actionState);
+      
+      this.updateAction(actionId, { status: 'complete', executed: true });
+      if (artifactId) {
+        setArtifactRunning(artifactId, false);
+      }
+      
+      this.logger.info(`File action completed: ${action.filePath}`);
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : 'File action failed';
+      this.logger.error(`File action failed:`, error);
+      this.updateAction(actionId, { status: 'failed', error: errorMessage });
+      if (artifactId) {
+        setArtifactError(artifactId, errorMessage);
+      }
     }
   }
 
-  private executeFileActionParallel(data: { actionId: string; action: BoltAction; artifactId?: string }) {
-    const { actionId, artifactId } = data;
-    this.pendingFileActions.add(actionId);
+  private async runShellActionFromQueue(action: BoltAction): Promise<void> {
+    const actionId = this.actionIdMap.get(action);
+    const artifactId = this.artifactIdMap.get(action);
     
-    // Execute file action in parallel - optimized for batch execution
-    this.initialize()
-      .then(async () => {
-        const action = this.actions.get(actionId);
-        if (!action || action.executed) {
-          this.pendingFileActions.delete(actionId);
-          return;
-        }
-
-        this.updateAction(actionId, { ...action, ...data.action, executed: true });
-        await this.executeAction(actionId, artifactId);
-        this.pendingFileActions.delete(actionId);
-        
-        // Log completion for batch tracking
-        this.logger.info(`File action completed: ${action.filePath} (${this.pendingFileActions.size} remaining)`);
-      })
-      .catch((error) => {
-        this.pendingFileActions.delete(actionId);
-        this.logger.error(`File action failed:`, error);
-        if (artifactId) {
-          setArtifactError(artifactId, error instanceof Error ? error.message : 'File action failed');
-        }
-      });
-  }
-
-  private executeShellActionSequential(data: { actionId: string; action: BoltAction; artifactId?: string }) {
-    this.shellExecutionPromise = this.shellExecutionPromise
-      .then(async () => {
-        const { actionId, artifactId } = data;
-        const action = this.actions.get(actionId);
-
-        if (!action || action.executed) {
-          return;
-        }
-
-        // Wait for initialization and any pending file actions that might conflict
-        await this.initialize();
-        await this.waitForFileActionsToComplete();
-
-        this.logger.info(`Executing shell command after file batch completion: ${action.content}`);
-        this.updateAction(actionId, { ...action, ...data.action, executed: true });
-        await this.executeAction(actionId, artifactId);
-        this.logger.info(`Shell command completed: ${action.content}`);
-      })
-      .catch((error) => {
-        const { artifactId } = data;
-        this.logger.error(`Shell action failed in execution chain:`, error);
-        if (artifactId) {
-          setArtifactError(artifactId, error instanceof Error ? error.message : 'Shell action failed');
-        }
-        // We don't re-throw, so one failed action doesn't stop the entire queue
-      });
-  }
-
-  private async waitForFileActionsToComplete(): Promise<void> {
-    // Wait for all pending file actions to complete before executing shell commands
-    // This prevents conflicts like shell commands running before required files are written
-    const maxWait = 10000; // 10 seconds max wait (increased for batch operations)
-    const startTime = Date.now();
-    
-    if (this.pendingFileActions.size > 0) {
-      this.logger.info(`Waiting for ${this.pendingFileActions.size} file actions to complete before shell execution`);
+    if (!actionId) {
+      this.logger.error('Action ID not found for shell action');
+      return;
     }
-    
-    while (this.pendingFileActions.size > 0 && (Date.now() - startTime) < maxWait) {
-      await new Promise(resolve => setTimeout(resolve, 100));
-    }
-    
-    if (this.pendingFileActions.size > 0) {
-      this.logger.warn(`Timeout waiting for file actions. ${this.pendingFileActions.size} actions still pending.`);
-    } else {
-      this.logger.info('All file actions completed, proceeding with shell execution');
+
+    try {
+      await this.initialize();
+      
+      const actionState = this.actions.get(actionId);
+      if (!actionState || actionState.executed || actionState.abortSignal.aborted) {
+        return;
+      }
+
+      this.updateAction(actionId, { status: 'running' });
+      if (artifactId) {
+        setArtifactRunning(artifactId, true);
+      }
+
+      this.logger.info(`Executing shell command: ${action.content}`);
+      await this.runShellAction(actionState);
+      
+      this.updateAction(actionId, { status: 'complete', executed: true });
+      if (artifactId) {
+        setArtifactRunning(artifactId, false);
+      }
+      
+      this.logger.info(`Shell command completed: ${action.content}`);
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : 'Shell action failed';
+      this.logger.error(`Shell action failed:`, error);
+      this.updateAction(actionId, { status: 'failed', error: errorMessage });
+      if (artifactId) {
+        setArtifactError(artifactId, errorMessage);
+      }
     }
   }
 
@@ -294,49 +317,13 @@ class ActionRunner {
         action.abort();
       }
     });
+    
+    // Clear the queues
+    this.fileActionQueue = [];
+    this.shellActionQueue = [];
+    this.isProcessing = false;
+    
     appendTerminalOutput('\n⚠️ Action execution aborted\n');
-  }
-
-  private async executeAction(actionId: string, artifactId?: string) {
-    const action = this.actions.get(actionId);
-
-    if (!action) {
-      this.logger.error(`Action ${actionId} not found`);
-      return;
-    }
-
-    this.updateAction(actionId, { status: 'running' });
-
-    try {
-      switch (action.type) {
-        case 'shell': {
-          await this.runShellAction(action);
-          break;
-        }
-        case 'file': {
-          await this.runFileAction(action);
-          break;
-        }
-      }
-
-      const finalStatus = action.abortSignal.aborted ? 'aborted' : 'complete';
-      this.updateAction(actionId, { status: finalStatus });
-      
-      if (artifactId && finalStatus === 'complete') {
-        setArtifactRunning(artifactId, false);
-      }
-    } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : 'Action failed';
-      this.logger.error(`Action ${actionId} failed:`, error);
-      this.updateAction(actionId, { status: 'failed', error: errorMessage });
-      
-      if (artifactId) {
-        setArtifactError(artifactId, errorMessage);
-      }
-      
-      // re-throw the error to be caught in the promise chain
-      throw error;
-    }
   }
 
   private isDevServerCommand(commandString: string): boolean {

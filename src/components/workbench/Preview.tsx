@@ -2,9 +2,8 @@ import React, { useState, useEffect, useRef } from 'react';
 import { useStore } from '@nanostores/react';
 import { workbenchStore } from '../../lib/stores/workbenchStore';
 import { Button } from '../ui/button';
-import { Input } from '../ui/input';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../ui/select';
-import { RefreshCw, ExternalLink, Globe, AlertCircle, Loader2 } from 'lucide-react';
+import { RefreshCw, Globe, AlertCircle, Loader2 } from 'lucide-react';
 import { cn } from '../../lib/utils';
 
 interface PreviewProps {
@@ -18,27 +17,24 @@ export function Preview({ className }: PreviewProps) {
   useEffect(() => {
     console.log(`[Preview] Workbench store preview URL:`, workbench.previewUrl);
   }, [workbench.previewUrl]);
-  const [customUrl, setCustomUrl] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const iframeRef = useRef<HTMLIFrameElement>(null);
 
   const activePreview = workbench.previews[workbench.activePreviewIndex];
-  const currentUrl = customUrl || workbench.previewUrl || activePreview?.url || '';
+  const currentUrl = workbench.previewUrl || activePreview?.url || '';
 
   // Debug current URL selection
   useEffect(() => {
     console.log(`[Preview] Current URL selected:`, {
-      customUrl,
       previewUrl: workbench.previewUrl,
       activePreviewUrl: activePreview?.url,
       finalUrl: currentUrl
     });
-  }, [customUrl, workbench.previewUrl, activePreview?.url, currentUrl]);
+  }, [workbench.previewUrl, activePreview?.url, currentUrl]);
 
-  // Reset custom URL when active preview changes
+  // Reset error when active preview changes
   useEffect(() => {
-    setCustomUrl('');
     setError(null);
   }, [workbench.activePreviewIndex]);
 
@@ -58,24 +54,13 @@ export function Preview({ className }: PreviewProps) {
     }
   };
 
-  const handleUrlSubmit = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (customUrl && iframeRef.current) {
-      setIsLoading(true);
-      setError(null);
-      iframeRef.current.src = customUrl;
-    }
-  };
+
 
   const handlePreviewChange = (index: string) => {
     workbenchStore.setKey('activePreviewIndex', parseInt(index));
   };
 
-  const handleOpenExternal = () => {
-    if (currentUrl) {
-      window.open(currentUrl, '_blank');
-    }
-  };
+
 
   const handleIframeLoad = () => {
     setIsLoading(false);
@@ -91,11 +76,7 @@ export function Preview({ className }: PreviewProps) {
   if (!workbench.previews.length && !workbench.previewUrl) {
     return (
       <div className={cn('flex flex-col h-full bg-background', className)}>
-        <div className="flex items-center justify-between p-4 border-b border-border">
-          <div className="flex items-center gap-2">
-            <Globe className="w-4 h-4" />
-            <span className="text-sm font-medium">Preview</span>
-          </div>
+        <div className="p-2 border-b border-border">
         </div>
         <div className="flex-1 flex items-center justify-center">
           <div className="text-center text-muted-foreground">
@@ -113,66 +94,39 @@ export function Preview({ className }: PreviewProps) {
   return (
     <div className={cn('flex flex-col h-full bg-background', className)}>
       {/* Header */}
-      <div className="flex items-center justify-between p-4 border-b border-border">
-        <div className="flex items-center gap-2">
-          <Globe className="w-4 h-4" />
-          <span className="text-sm font-medium">Preview</span>
-          {workbench.previews.length > 1 && (
-            <Select
-              value={workbench.activePreviewIndex.toString()}
-              onValueChange={handlePreviewChange}
-            >
-              <SelectTrigger className="w-auto h-8 text-xs">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                {workbench.previews.map((preview, index) => (
-                  <SelectItem key={index} value={index.toString()}>
-                    Port {preview.port}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          )}
-        </div>
-        <div className="flex items-center gap-2">
-          <Button
-            variant="ghost"
-            size="sm"
-            onClick={handleRefresh}
-            disabled={!currentUrl || isLoading}
+      {workbench.previews.length > 1 && (
+        <div className="flex items-center justify-center p-2 border-b border-border">
+          <Select
+            value={workbench.activePreviewIndex.toString()}
+            onValueChange={handlePreviewChange}
           >
-            <RefreshCw className={cn('w-4 h-4', isLoading && 'animate-spin')} />
-          </Button>
-          <Button
-            variant="ghost"
-            size="sm"
-            onClick={handleOpenExternal}
-            disabled={!currentUrl}
-          >
-            <ExternalLink className="w-4 h-4" />
-          </Button>
+            <SelectTrigger className="w-auto h-8 text-xs">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              {workbench.previews.map((preview, index) => (
+                <SelectItem key={index} value={index.toString()}>
+                  Port {preview.port}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
         </div>
-      </div>
-
-      {/* URL Bar */}
-      <div className="p-4 border-b border-border">
-        <form onSubmit={handleUrlSubmit} className="flex gap-2">
-          <Input
-            type="url"
-            placeholder={activePreview?.url || 'Enter URL...'}
-            value={customUrl}
-            onChange={(e) => setCustomUrl(e.target.value)}
-            className="flex-1 text-sm"
-          />
-          <Button type="submit" size="sm" disabled={!customUrl}>
-            Go
-          </Button>
-        </form>
-      </div>
+      )}
 
       {/* Preview Content */}
       <div className="flex-1 relative">
+        {/* Refresh Button - Top Right Corner */}
+        <Button
+          variant="secondary"
+          size="sm"
+          onClick={handleRefresh}
+          disabled={!currentUrl || isLoading}
+          className="absolute top-3 right-3 z-20 bg-white/90 hover:bg-white border border-gray-300 shadow-md backdrop-blur-sm"
+        >
+          <RefreshCw className={cn('w-4 h-4 text-gray-700', isLoading && 'animate-spin')} />
+        </Button>
+        
         {error ? (
           <div className="flex items-center justify-center h-full">
             <div className="text-center text-muted-foreground">

@@ -5,7 +5,7 @@ import { FileExplorer } from '../code/FileExplorer';
 import CodeChatInterface from '../code/CodeChatInterface';
 import { Artifact } from '../Artifact';
 import { Preview } from './Preview';
-import { Terminal, TerminalIcon, X, Maximize2, Minimize2, Package, FileText, Globe } from 'lucide-react';
+import { Terminal, TerminalIcon, X, Maximize2, Minimize2, Package, FileText, Globe, RefreshCw } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
@@ -106,7 +106,7 @@ export function WorkbenchLayout({ className }: WorkbenchLayoutProps) {
           onLayout={handlePanelResize}
           className="h-full"
         >
-          {/* Left Sidebar - Chat & Artifacts */}
+          {/* Left Sidebar - Chat Only */}
           <ResizablePanel
             defaultSize={panelSizes.sidebar}
             minSize={15}
@@ -116,31 +116,15 @@ export function WorkbenchLayout({ className }: WorkbenchLayoutProps) {
             onExpand={() => setIsSidebarCollapsed(false)}
           >
             <div className="h-full flex flex-col">
-              <Tabs defaultValue="chat" className="h-full flex flex-col">
-                <TabsList className="grid w-full grid-cols-2 m-2">
-                  <TabsTrigger value="chat">Chat</TabsTrigger>
-                  <TabsTrigger value="artifacts" className="relative">
-                    <Package className="w-3 h-3 mr-1" />
-                    Artifacts
-                    {Object.keys(artifacts).length > 0 && (
-                      <Badge variant="secondary" className="ml-1 h-4 text-xs">
-                        {Object.keys(artifacts).length}
-                      </Badge>
-                    )}
-                  </TabsTrigger>
-                </TabsList>
-                
-                <TabsContent value="chat" className="flex-1 m-0 p-2">
-                  <CodeChatInterface 
-                    onSendMessage={handleSendMessage}
-                    className="h-full border-0 rounded-none"
-                  />
-                </TabsContent>
-                
-                <TabsContent value="artifacts" className="flex-1 m-0 p-2">
-                  <Artifact className="h-full border-0 rounded-none" />
-                </TabsContent>
-              </Tabs>
+              <div className="p-2 border-b border-gray-200 dark:border-gray-700">
+                <h3 className="text-sm font-medium text-gray-700 dark:text-gray-300">Chat</h3>
+              </div>
+              <div className="flex-1 p-2">
+                <CodeChatInterface 
+                  onSendMessage={handleSendMessage}
+                  className="h-full border-0 rounded-none"
+                />
+              </div>
             </div>
           </ResizablePanel>
 
@@ -175,20 +159,34 @@ export function WorkbenchLayout({ className }: WorkbenchLayoutProps) {
                       </TabsList>
                       
                       <div className="flex items-center space-x-1">
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          onClick={toggleSidebar}
-                          className="h-6 w-6 p-0"
-                        >
-                          {isSidebarCollapsed ? <Maximize2 className="w-3 h-3" /> : <Minimize2 className="w-3 h-3" />}
-                        </Button>
+                        {activeMainTab === 'preview' && (
+                          <Button
+                            onClick={() => {
+                              // Trigger refresh for preview
+                              const previewIframe = document.querySelector('iframe[title="Preview"]') as HTMLIFrameElement;
+                              if (previewIframe) {
+                                previewIframe.src = previewIframe.src;
+                              }
+                            }}
+                            className="bg-gradient-to-br from-emerald-600 to-emerald-700 hover:from-emerald-700 hover:to-emerald-800 text-white font-medium h-8 px-4 rounded-xl shadow-lg hover:shadow-xl transition-all duration-200 backdrop-blur-sm border border-emerald-500/30 hover:border-emerald-400/50"
+                          >
+                            <RefreshCw className="w-3 h-3 mr-2" />
+                            <span className="text-sm">Refresh</span>
+                          </Button>
+                        )}
                       </div>
                     </div>
                     
-                    {/* Files Tab Content - Unified Explorer + Editor */}
+                    {/* Files Tab Content - Three Panel Layout: Artifacts + Explorer + Editor */}
                     <TabsContent value="files" className="flex-1 m-0 p-0">
                       <ResizablePanelGroup direction="horizontal" className="h-full">
+                        {/* Artifacts Panel */}
+                        <ResizablePanel defaultSize={25} minSize={15} maxSize={40} collapsible={true}>
+                          <Artifact className="h-full border-0 rounded-none" />
+                        </ResizablePanel>
+                        
+                        <ResizableHandle withHandle />
+                        
                         {/* File Explorer Panel */}
                         <ResizablePanel defaultSize={30} minSize={20} maxSize={50}>
                           <FileExplorer className="h-full border-0 rounded-none" />
@@ -197,7 +195,7 @@ export function WorkbenchLayout({ className }: WorkbenchLayoutProps) {
                         <ResizableHandle withHandle />
                         
                         {/* Code Editor Panel */}
-                        <ResizablePanel defaultSize={70} minSize={50}>
+                        <ResizablePanel defaultSize={45} minSize={30}>
                           <CodeEditor className="h-full" />
                         </ResizablePanel>
                       </ResizablePanelGroup>
@@ -211,8 +209,8 @@ export function WorkbenchLayout({ className }: WorkbenchLayoutProps) {
                 </div>
               </ResizablePanel>
 
-              {/* Terminal/Bottom Panel */}
-              {!isTerminalCollapsed && (
+              {/* Terminal/Bottom Panel - Only show when not on Preview tab */}
+              {!isTerminalCollapsed && activeMainTab !== 'preview' && (
                 <>
                   <ResizableHandle withHandle />
                   <ResizablePanel defaultSize={30} minSize={15} maxSize={60}>
