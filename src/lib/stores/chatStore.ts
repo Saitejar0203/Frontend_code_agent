@@ -12,6 +12,7 @@ export interface Message {
 export interface ChatState {
   messages: Message[];
   isGenerating: boolean;
+  isThinking: boolean;
   currentSessionId: string | null;
   error: string | null;
 }
@@ -19,6 +20,7 @@ export interface ChatState {
 export const chatStore = map<ChatState>({
   messages: [],
   isGenerating: false,
+  isThinking: false,
   currentSessionId: null,
   error: null,
 });
@@ -46,6 +48,10 @@ export function updateLastMessage(content: string) {
 
 export function setGenerating(isGenerating: boolean) {
   chatStore.setKey('isGenerating', isGenerating);
+}
+
+export function setThinking(isThinking: boolean) {
+  chatStore.setKey('isThinking', isThinking);
 }
 
 export function setCurrentSession(sessionId: string) {

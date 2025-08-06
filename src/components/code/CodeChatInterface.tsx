@@ -14,6 +14,7 @@ import {
 } from '@/lib/stores/chatStore';
 import { AssistantMessage } from '../chat/AssistantMessage';
 import { UserMessage } from '../chat/UserMessage';
+import { ThinkingAnimation } from '../chat/ThinkingAnimation';
 
 interface CodeChatInterfaceProps {
   onSendMessage?: (message: string) => void;
@@ -24,7 +25,7 @@ const CodeChatInterface: React.FC<CodeChatInterfaceProps> = ({
   onSendMessage,
   className
 }) => {
-  const { messages, isGenerating, error } = useStore(chatStore);
+  const { messages, isGenerating, isThinking, error } = useStore(chatStore);
   const [input, setInput] = useState('');
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
@@ -117,6 +118,16 @@ const CodeChatInterface: React.FC<CodeChatInterfaceProps> = ({
               </div>
             );
           })
+        )}
+        {isThinking && (
+          <div className="flex gap-4 p-6 w-full rounded-lg bg-gray-50 dark:bg-gray-800/50">
+            <div className="flex items-center justify-center w-8 h-8 overflow-hidden bg-gray-600 text-white rounded-full shrink-0 self-start">
+              <Bot className="w-4 h-4" />
+            </div>
+            <div className="grid grid-cols-1 w-full min-w-0">
+              <ThinkingAnimation />
+            </div>
+          </div>
         )}
         {error && (
           <div className="bg-red-100 dark:bg-red-900 border border-red-400 text-red-700 dark:text-red-200 px-4 py-3 rounded">

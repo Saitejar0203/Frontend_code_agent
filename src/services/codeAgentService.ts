@@ -1,7 +1,7 @@
 // frontend/src/services/codeAgentService.ts
 import { StreamingMessageParser, ParserCallbacks } from '@/lib/runtime/StreamingMessageParser';
 import { actionRunner } from '@/lib/runtime/ActionRunner';
-import { addMessage, updateMessage, setGenerating, type Message } from '@/lib/stores/chatStore';
+import { addMessage, updateMessage, setGenerating, setThinking, type Message } from '@/lib/stores/chatStore';
 import { chatStore } from '@/lib/stores/chatStore';
 import { addArtifact, addActionToArtifact, addOrUpdateFileFromAction } from '@/lib/stores/workbenchStore';
 
@@ -45,7 +45,8 @@ export async function sendChatMessage(userInput: string): Promise<void> {
   console.log('📝 Adding user message to store:', userMessage);
   addMessage(userMessage);
   setGenerating(true);
-  console.log('⏳ Set generating to true');
+  setThinking(true);
+  console.log('⏳ Set generating to true and thinking to true');
   
   // Initialize ActionRunner
   try {
@@ -62,6 +63,7 @@ export async function sendChatMessage(userInput: string): Promise<void> {
     };
     addMessage(errorMessage);
     setGenerating(false);
+    setThinking(false);
     return;
   }
   
@@ -111,6 +113,8 @@ export async function sendChatMessage(userInput: string): Promise<void> {
       ...parserCallbacks,
       onText: (text: string) => {
         console.log('📝 Received text chunk:', text);
+        // Stop thinking animation when first text arrives
+        setThinking(false);
         if (text && text.trim()) {
           // Only accumulate text that is not inside XML tags
           const parser = (callbacks as any)._parser;
@@ -157,6 +161,7 @@ export async function sendChatMessage(userInput: string): Promise<void> {
       },
       onError: (error: string) => {
         console.error('❌ Streaming error:', error);
+        setThinking(false);
         const errorMessage: Message = {
           id: Date.now().toString(),
           content: `❌ Error: ${error}`,
@@ -176,6 +181,7 @@ export async function sendChatMessage(userInput: string): Promise<void> {
         }
         
         setGenerating(false);
+        setThinking(false);
       }
     };
     
@@ -194,6 +200,8 @@ export async function sendChatMessage(userInput: string): Promise<void> {
       type: 'text'
     };
     addMessage(errorMessage);
+    setGenerating(false);
+    setThinking(false);
   } finally {
     // setGenerating(false) is now handled in onComplete callback
   }
