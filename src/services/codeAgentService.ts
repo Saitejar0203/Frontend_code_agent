@@ -100,6 +100,7 @@ export async function sendChatMessage(userInput: string, webcontainer?: WebConta
     
     let accumulatedText = '';
     let currentMessageId: string | null = null;
+    let rawResponse = ''; // Store the complete raw response with XML tags
     
     // Set up parser callbacks for artifact and action handling
     const parserCallbacks: ParserCallbacks = {
@@ -201,16 +202,10 @@ export async function sendChatMessage(userInput: string, webcontainer?: WebConta
       onComplete: async () => {
         console.log('✅ Stream completed. ActionRunner will continue processing any remaining actions.');
         
-        // Finalize the UI message state and add to conversation history
+        // Finalize the UI message state
         const lastMessage = chatStore.get().messages.slice(-1)[0];
         if (lastMessage && lastMessage.sender === 'agent' && lastMessage.isStreaming) {
           updateMessage(lastMessage.id, { isStreaming: false });
-          
-          // Add agent response to conversation history
-          if (lastMessage.content.trim()) {
-            addToConversationHistory('assistant', lastMessage.content);
-            console.log('📚 Added agent response to conversation history');
-          }
         }
         
         setGenerating(false);
@@ -224,8 +219,16 @@ export async function sendChatMessage(userInput: string, webcontainer?: WebConta
     
     // Use the existing streamAgentResponse function
     console.log('🌐 Calling streamAgentResponse with input:', userInput);
-    await streamAgentResponse(userInput, callbacks, conversationHistory);
-    console.log('✅ streamAgentResponse completed');
+    rawResponse = await streamAgentResponse(userInput, callbacks, conversationHistory);
+    console.log('✅ streamAgentResponse completed with raw response length:', rawResponse.length);
+    
+    // Now update conversation history with the complete raw response
+    const lastMessage = chatStore.get().messages.slice(-1)[0];
+    if (lastMessage && lastMessage.sender === 'agent' && rawResponse.trim()) {
+      updateMessage(lastMessage.id, { rawContent: rawResponse });
+      addToConversationHistory('assistant', lastMessage.content, rawResponse);
+      console.log('📚 Added agent response to conversation history with raw content');
+    }
     
   } catch (error) {
     console.error('Failed to generate project:', error);
@@ -374,6 +377,7 @@ export async function streamAgentResponse(prompt: string, callbacks: GeminiParse
     callbacks.onComplete?.();
     // --- END OF THE FIX ---
     
+    console.log('📊 Returning full response with length:', fullResponse.length);
     return fullResponse;
   } catch (error) {
     console.error('Error in streamAgentResponse:', error);

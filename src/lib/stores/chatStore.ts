@@ -2,7 +2,8 @@ import { map } from 'nanostores';
 
 export interface Message {
   id: string;
-  content: string;
+  content: string; // Processed content for display
+  rawContent?: string; // Original raw content with XML tags (for agent messages)
   sender: 'user' | 'agent';
   timestamp: Date;
   type?: 'text' | 'artifact';
@@ -11,7 +12,7 @@ export interface Message {
 
 export interface ConversationEntry {
   role: 'user' | 'assistant';
-  content: string;
+  content: string; // Raw content for API requests
   timestamp: Date;
 }
 
@@ -96,11 +97,11 @@ export function updateMessage(messageId: string, updates: Partial<Message>) {
 }
 
 // Conversation history management
-export function addToConversationHistory(role: 'user' | 'assistant', content: string) {
+export function addToConversationHistory(role: 'user' | 'assistant', content: string, rawContent?: string) {
   const currentHistory = chatStore.get().conversationHistory;
   const newEntry: ConversationEntry = {
     role,
-    content,
+    content: rawContent || content, // Use rawContent for agent messages to preserve XML tags
     timestamp: new Date()
   };
   chatStore.setKey('conversationHistory', [...currentHistory, newEntry]);
