@@ -7,8 +7,10 @@ import {
   setFileTree,
   setArtifactRunning,
   setArtifactError,
+  clearRunningCommands,
   type FileNode
 } from '@/lib/stores/workbenchStore';
+import { addFileModification } from '@/lib/stores/chatStore';
 import { FileSystemTree, WebContainer } from '@webcontainer/api';
 
 import { createScopedLogger } from './logger';
@@ -259,12 +261,7 @@ class ActionRunner {
       
       this.logger.info(`File action completed: ${action.filePath}`);
     } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : 'File action failed';
-      this.logger.error(`File action failed:`, error);
-      this.updateAction(actionId, { status: 'failed', error: errorMessage });
-      if (artifactId) {
-        setArtifactError(artifactId, errorMessage);
-      }
+      this.handleActionFailure(actionId, error instanceof Error ? error : new Error('File action failed'));
     }
   }
 
@@ -300,16 +297,13 @@ class ActionRunner {
       
       this.logger.info(`Shell command completed: ${action.content}`);
     } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : 'Shell action failed';
-      this.logger.error(`Shell action failed:`, error);
-      this.updateAction(actionId, { status: 'failed', error: errorMessage });
-      if (artifactId) {
-        setArtifactError(artifactId, errorMessage);
-      }
+      this.handleActionFailure(actionId, error instanceof Error ? error : new Error('Shell action failed'));
     }
   }
 
   public abort(): void {
+    this.logger.info('🛑 Aborting all actions and clearing queues');
+    
     // Abort all running actions
     this.actions.forEach((action) => {
       if (action.status === 'running' || action.status === 'pending') {
@@ -322,20 +316,107 @@ class ActionRunner {
     this.shellActionQueue = [];
     this.isProcessing = false;
     
-    appendTerminalOutput('\n⚠️ Action execution aborted\n');
+    // Clear action and artifact ID mappings
+    this.actionIdMap.clear();
+    this.artifactIdMap.clear();
+    
+    // Clear running commands
+    clearRunningCommands();
+    
+    appendTerminalOutput('\n⚠️ All actions aborted and queues cleared\n');
+  }
+
+  /**
+   * Clear all action history and reset state
+   * This is useful when starting a new conversation or artifact
+   */
+  public resetState(): void {
+    this.logger.info('🔄 Resetting ActionRunner state');
+    
+    // First abort any running actions
+    this.abort();
+    
+    // Clear all action history
+    this.actions.clear();
+    
+    // Reset directory cache
+    this.directoryCache.clear();
+    
+    // Cancel any pending file tree updates
+    if (this.fileTreeUpdateTimeout) {
+      clearTimeout(this.fileTreeUpdateTimeout);
+      this.fileTreeUpdateTimeout = null;
+    }
+    
+    appendTerminalOutput('\n🔄 ActionRunner state reset\n');
+  }
+
+  /**
+   * Handle action failure and cleanup
+   */
+  private handleActionFailure(actionId: string, error: Error): void {
+    this.logger.error(`❌ Action ${actionId} failed:`, error);
+    
+    const action = this.actions.get(actionId);
+    if (action) {
+      this.updateAction(actionId, { status: 'failed', error: error.message });
+    }
+    
+    // Clean up any associated processes
+    this.cleanupActionProcess(actionId);
+  }
+
+  /**
+   * Clean up processes associated with an action
+   */
+  private cleanupActionProcess(actionId: string): void {
+    const action = this.actions.get(actionId);
+    if (!action) return;
+    
+    // Remove from running commands if it was a shell action
+    if (action.type === 'shell') {
+      removeRunningCommand(action.content);
+    }
+    
+    // Clean up artifact mappings
+    const artifactId = this.artifactIdMap.get(action);
+    if (artifactId) {
+      setArtifactRunning(artifactId, false);
+      setArtifactError(artifactId, action.status === 'failed' ? (action as FailedActionState).error : 'Action failed');
+    }
+    
+    // Remove from tracking maps
+    this.actionIdMap.delete(action);
+    this.artifactIdMap.delete(action);
   }
 
   private isDevServerCommand(commandString: string): boolean {
     const devServerPatterns = [
-      /^npm\s+(start|run\s+dev|run\s+serve)$/,
-      /^yarn\s+(start|dev|serve)$/,
-      /^pnpm\s+(start|dev|serve)$/,
-      /^bun\s+(start|dev|serve)$/,
-      /^npx\s+vite$/,
-      /^npx\s+webpack-dev-server$/,
-      /^npx\s+next\s+dev$/,
-      /^python\s+-m\s+http\.server$/,
-      /^python3\s+-m\s+http\.server$/
+      // npm patterns
+      /^npm\s+(start|run\s+dev|run\s+serve|run\s+preview)$/,
+      /^npm\s+run\s+dev(:\w+)?$/,
+      // yarn patterns
+      /^yarn\s+(start|dev|serve|preview)$/,
+      /^yarn\s+dev(:\w+)?$/,
+      // pnpm patterns
+      /^pnpm\s+(start|dev|serve|preview)$/,
+      /^pnpm\s+run\s+dev(:\w+)?$/,
+      // bun patterns
+      /^bun\s+(start|dev|serve|preview)$/,
+      /^bun\s+run\s+dev(:\w+)?$/,
+      // direct tool patterns
+      /^npx\s+vite(\s+.*)?$/,
+      /^npx\s+webpack-dev-server(\s+.*)?$/,
+      /^npx\s+next\s+dev(\s+.*)?$/,
+      /^npx\s+create-react-app(\s+.*)?$/,
+      /^npx\s+@angular\/cli\s+serve(\s+.*)?$/,
+      // python servers
+      /^python\s+-m\s+http\.server(\s+\d+)?$/,
+      /^python3\s+-m\s+http\.server(\s+\d+)?$/,
+      // other common dev servers
+      /^live-server(\s+.*)?$/,
+      /^http-server(\s+.*)?$/,
+      /^serve(\s+.*)?$/
     ];
     
     return devServerPatterns.some(pattern => pattern.test(commandString.trim()));
@@ -343,16 +424,40 @@ class ActionRunner {
 
   private isServerReadyOutput(output: string): boolean {
     const serverReadyPatterns = [
+      // Vite patterns
       /Server ready at/i,
       /Local:\s+https?:\/\//i,
       /Network:\s+https?:\/\//i,
+      /vite.*ready in/i,
+      /ready in \d+ms/i,
+      // Next.js patterns
       /ready on/i,
+      /started server on/i,
+      /Local:\s+http/i,
+      // General server patterns
       /running at/i,
       /listening on/i,
-      /started server on/i,
       /dev server running at/i,
-      /vite.*ready in/i,
-      /webpack.*compiled successfully/i
+      /server started/i,
+      /development server/i,
+      // Webpack patterns
+      /webpack.*compiled successfully/i,
+      /compiled successfully/i,
+      /webpack: Compiled successfully/i,
+      // React patterns
+      /webpack compiled/i,
+      /compiled without errors/i,
+      // Angular patterns
+      /Angular Live Development Server/i,
+      /Local:\s+ng/i,
+      // Python server patterns
+      /Serving HTTP on/i,
+      /HTTP server is ready/i,
+      // Generic patterns
+      /server is running/i,
+      /application started/i,
+      /✓.*ready/i,
+      /🚀.*ready/i
     ];
     
     return serverReadyPatterns.some(pattern => pattern.test(output));
@@ -372,11 +477,32 @@ class ActionRunner {
     const [command, ...args] = commandString.split(' ');
     // --- END OF FIX ---
     
+    const isDevServer = this.isDevServerCommand(commandString);
+    
+    // If starting a new dev server, stop all previous running actions
+    if (isDevServer) {
+      this.logger.info('🔄 Starting new development server - stopping previous processes');
+      appendTerminalOutput('🔄 Stopping previous development servers...\n');
+      
+      // Abort all currently running actions
+      this.actions.forEach((runningAction) => {
+        if (runningAction.status === 'running' && runningAction.type === 'shell') {
+          runningAction.abort();
+        }
+      });
+      
+      // Clear running commands list
+      clearRunningCommands();
+      
+      // Small delay to ensure cleanup
+      await new Promise(resolve => setTimeout(resolve, 500));
+    }
+    
     this.logger.info(`Executing shell command: ${command}`, args);
     appendTerminalOutput(`$ ${commandString}\n`);
+
     addRunningCommand(commandString);
 
-    const isDevServer = this.isDevServerCommand(commandString);
     let serverReady = false;
 
     try {
@@ -492,6 +618,9 @@ class ActionRunner {
       
       appendTerminalOutput(`  ✅ ${filePath}\n`);
       this.logger.info(`File written successfully: ${filePath}`);
+      
+      // Track file modification
+      addFileModification(filePath);
       
       // Batch file tree updates to reduce overhead
       this.scheduleFileTreeUpdate();

@@ -9,12 +9,27 @@ export interface Message {
   isStreaming?: boolean;
 }
 
+export interface ConversationEntry {
+  role: 'user' | 'assistant';
+  content: string;
+  timestamp: Date;
+}
+
+export interface FileModificationSummary {
+  filesCreated: string[];
+  filesModified: string[];
+  commandsExecuted: string[];
+  timestamp: Date;
+}
+
 export interface ChatState {
   messages: Message[];
   isGenerating: boolean;
   isThinking: boolean;
   currentSessionId: string | null;
   error: string | null;
+  conversationHistory: ConversationEntry[];
+  fileModifications: FileModificationSummary[];
 }
 
 export const chatStore = map<ChatState>({
@@ -23,6 +38,8 @@ export const chatStore = map<ChatState>({
   isThinking: false,
   currentSessionId: null,
   error: null,
+  conversationHistory: [],
+  fileModifications: [],
 });
 
 // Actions
@@ -76,4 +93,53 @@ export function updateMessage(messageId: string, updates: Partial<Message>) {
     message.id === messageId ? { ...message, ...updates } : message
   );
   chatStore.setKey('messages', updatedMessages);
+}
+
+// Conversation history management
+export function addToConversationHistory(role: 'user' | 'assistant', content: string) {
+  const currentHistory = chatStore.get().conversationHistory;
+  const newEntry: ConversationEntry = {
+    role,
+    content,
+    timestamp: new Date()
+  };
+  chatStore.setKey('conversationHistory', [...currentHistory, newEntry]);
+}
+
+export function buildConversationHistory(): Array<{role: string, content: string}> {
+  const history = chatStore.get().conversationHistory;
+  return history.map(entry => ({
+    role: entry.role,
+    content: entry.content
+  }));
+}
+
+// File modification tracking
+export function addFileModification(summary: FileModificationSummary) {
+  const currentModifications = chatStore.get().fileModifications;
+  chatStore.setKey('fileModifications', [...currentModifications, summary]);
+}
+
+export function getLatestFileModifications(): FileModificationSummary | null {
+  const modifications = chatStore.get().fileModifications;
+  return modifications.length > 0 ? modifications[modifications.length - 1] : null;
+}
+
+// New chat functionality
+export function startNewChat() {
+  chatStore.setKey('messages', []);
+  chatStore.setKey('conversationHistory', []);
+  chatStore.setKey('fileModifications', []);
+  chatStore.setKey('error', null);
+  chatStore.setKey('isGenerating', false);
+  chatStore.setKey('isThinking', false);
+  chatStore.setKey('currentSessionId', null);
+}
+
+// Clear only UI messages while preserving conversation history
+export function clearUIMessages() {
+  chatStore.setKey('messages', []);
+  chatStore.setKey('error', null);
+  chatStore.setKey('isGenerating', false);
+  chatStore.setKey('isThinking', false);
 }

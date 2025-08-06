@@ -11,6 +11,8 @@ import { Badge } from '@/components/ui/badge';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { useStore } from '@nanostores/react';
 import { workbenchStore, setActiveTab } from '@/lib/stores/workbenchStore';
+import { useWebContainer } from '../webcontainer/WebContainerProvider';
+import { sendChatMessage } from '@/services/codeAgentService';
 import { useTerminalIntegration } from '@/hooks/useTerminalIntegration';
 
 interface WorkbenchLayoutProps {
@@ -86,9 +88,11 @@ export function WorkbenchLayout({ className }: WorkbenchLayoutProps) {
     }
   };
 
-  const handleSendMessage = (message: string) => {
-    // TODO: Implement message sending logic
-    console.log('Sending message:', message);
+  const { webcontainer, actionRunner } = useWebContainer();
+
+  const handleSendMessage = async (message: string) => {
+    console.log('🚀 WorkbenchLayout sending message:', message);
+    await sendChatMessage(message, webcontainer, actionRunner);
   };
 
   return (

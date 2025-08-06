@@ -1,9 +1,9 @@
 // frontend/src/services/codeAgentService.ts
 import { StreamingMessageParser, ParserCallbacks } from '@/lib/runtime/StreamingMessageParser';
 import { ActionRunner } from '@/lib/runtime/ActionRunner';
-import { addMessage, updateMessage, setGenerating, setThinking, type Message } from '@/lib/stores/chatStore';
+import { addMessage, updateMessage, setGenerating, setThinking, addToConversationHistory, buildConversationHistory, type Message } from '@/lib/stores/chatStore';
 import { chatStore } from '@/lib/stores/chatStore';
-import { addArtifact, addActionToArtifact, addOrUpdateFileFromAction } from '@/lib/stores/workbenchStore';
+import { addArtifact, addArtifactAndPrepareExecution, addActionToArtifact, addOrUpdateFileFromAction, resetWorkbenchForNewConversation } from '@/lib/stores/workbenchStore';
 import { WebContainer } from '@webcontainer/api';
 
 export interface GenerateProjectRequest {
@@ -45,9 +45,23 @@ export async function sendChatMessage(userInput: string, webcontainer?: WebConta
   
   console.log('📝 Adding user message to store:', userMessage);
   addMessage(userMessage);
+  
+  // Add user message to conversation history
+  addToConversationHistory('user', userInput);
+  
   setGenerating(true);
   setThinking(true);
   console.log('⏳ Set generating to true and thinking to true');
+  
+  // Abort any previous actions and clear queues before starting new processing
+  if (actionRunner) {
+    console.log('🛑 Aborting previous actions before starting new message processing');
+    actionRunner.abort();
+  }
+  
+  // Reset workbench state for new conversation
+  console.log('🔄 Resetting workbench state for new conversation');
+  resetWorkbenchForNewConversation();
   
   // Validate WebContainer and ActionRunner are provided
   if (!webcontainer) {
@@ -92,7 +106,7 @@ export async function sendChatMessage(userInput: string, webcontainer?: WebConta
       onArtifactOpen: ({ messageId, id, title }) => {
         console.log(`📦 Artifact opened: ${id} - ${title}`);
         // Create the artifact in the workbench store to make it visible
-        addArtifact(id, title);
+        addArtifactAndPrepareExecution(id, title);
       },
       onArtifactClose: ({ messageId, id, title }) => {
         console.log(`📦 Artifact closed: ${id} - ${title}`);
@@ -187,10 +201,16 @@ export async function sendChatMessage(userInput: string, webcontainer?: WebConta
       onComplete: async () => {
         console.log('✅ Stream completed. ActionRunner will continue processing any remaining actions.');
         
-        // Finalize the UI message state
+        // Finalize the UI message state and add to conversation history
         const lastMessage = chatStore.get().messages.slice(-1)[0];
         if (lastMessage && lastMessage.sender === 'agent' && lastMessage.isStreaming) {
           updateMessage(lastMessage.id, { isStreaming: false });
+          
+          // Add agent response to conversation history
+          if (lastMessage.content.trim()) {
+            addToConversationHistory('assistant', lastMessage.content);
+            console.log('📚 Added agent response to conversation history');
+          }
         }
         
         setGenerating(false);
@@ -198,9 +218,13 @@ export async function sendChatMessage(userInput: string, webcontainer?: WebConta
       }
     };
     
+    // Build conversation history for context
+    const conversationHistory = buildConversationHistory();
+    console.log('📚 Built conversation history with', conversationHistory.length, 'entries');
+    
     // Use the existing streamAgentResponse function
     console.log('🌐 Calling streamAgentResponse with input:', userInput);
-    await streamAgentResponse(userInput, callbacks);
+    await streamAgentResponse(userInput, callbacks, conversationHistory);
     console.log('✅ streamAgentResponse completed');
     
   } catch (error) {

@@ -10,7 +10,7 @@ import { WorkbenchLayout } from '../components/workbench/WorkbenchLayout';
 import { WebContainerProvider, useWebContainer } from '../components/webcontainer/WebContainerProvider';
 
 import { useStore } from '@nanostores/react';
-import { chatStore, clearMessages, setGenerating, type Message } from '@/lib/stores/chatStore';
+import { chatStore, startNewChat, setGenerating, type Message } from '@/lib/stores/chatStore';
 import { workbenchStore, setFileTree, clearArtifacts } from '@/lib/stores/workbenchStore';
 import { sendChatMessage } from '@/services/codeAgentService';
 
@@ -45,12 +45,13 @@ const CodeAgentChatInner: React.FC = () => {
   };
 
   const handleNewChat = () => {
-    clearMessages();
+    // Use the new startNewChat function that clears conversation history too
+    startNewChat();
     clearArtifacts();
-    setGenerating(false);
     setIsInChatMode(false);
     setInputValue('');
     setFileTree([]);
+    console.log('🔄 Started new chat - cleared conversation history and UI state');
   };
 
   const handleSubmit = async (e: React.FormEvent) => {

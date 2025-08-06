@@ -248,6 +248,18 @@ export function addArtifact(id: string, title: string) {
   workbenchStore.setKey('artifactPanelVisible', true);
 }
 
+/**
+ * Add artifact and prepare for new execution context
+ * This clears previous running commands to ensure clean state
+ */
+export function addArtifactAndPrepareExecution(id: string, title: string) {
+  // Clear any running commands from previous artifacts
+  clearRunningCommands();
+  
+  // Add the new artifact
+  addArtifact(id, title);
+}
+
 export function addActionToArtifact(artifactId: string, action: BoltAction) {
   const currentArtifacts = workbenchStore.get().artifacts;
   const artifact = currentArtifacts[artifactId];
@@ -342,6 +354,24 @@ export function clearArtifacts() {
   workbenchStore.setKey('artifacts', {});
   workbenchStore.setKey('selectedArtifactId', null);
   workbenchStore.setKey('artifactPanelVisible', false);
+}
+
+/**
+ * Reset workbench state for new conversation
+ * Clears artifacts, running commands, and resets UI state
+ */
+export function resetWorkbenchForNewConversation() {
+  // Clear artifacts
+  clearArtifacts();
+  
+  // Clear running commands
+  clearRunningCommands();
+  
+  // Reset active tab to files
+  setActiveTab('files');
+  
+  // Clear any error states
+  // Note: We keep the file tree and terminal output for continuity
 }
 
 // =============================================================================
