@@ -1,12 +1,14 @@
 import React, { createContext, useContext, useEffect, useState, ReactNode } from 'react';
 import { WebContainer } from '@webcontainer/api';
 import { PreviewManager } from '../../lib/preview/PreviewManager';
+import { ActionRunner } from '../../lib/runtime/ActionRunner';
 import { workbenchStore } from '../../lib/stores/workbenchStore';
 
 // Global singleton for WebContainer
 let globalWebContainer: WebContainer | null = null;
 let globalWebContainerPromise: Promise<WebContainer> | null = null;
 let globalPreviewManager: PreviewManager | null = null;
+let globalActionRunner: ActionRunner | null = null;
 
 // Function to get or create the global WebContainer instance
 function getWebContainer(): Promise<WebContainer> {
@@ -27,6 +29,7 @@ interface WebContainerContextType {
   isBooting: boolean;
   error: string | null;
   previewManager: PreviewManager | null;
+  actionRunner: ActionRunner | null;
 }
 
 const WebContainerContext = createContext<WebContainerContextType>({
@@ -34,6 +37,7 @@ const WebContainerContext = createContext<WebContainerContextType>({
   isBooting: true,
   error: null,
   previewManager: null,
+  actionRunner: null,
 });
 
 export const useWebContainer = () => {
@@ -53,6 +57,7 @@ export function WebContainerProvider({ children }: WebContainerProviderProps) {
   const [isBooting, setIsBooting] = useState(!globalWebContainer);
   const [error, setError] = useState<string | null>(null);
   const [previewManager, setPreviewManager] = useState<PreviewManager | null>(globalPreviewManager);
+  const [actionRunner, setActionRunner] = useState<ActionRunner | null>(globalActionRunner);
 
   useEffect(() => {
     let mounted = true;
@@ -69,6 +74,13 @@ export function WebContainerProvider({ children }: WebContainerProviderProps) {
           globalPreviewManager = new PreviewManager(webcontainerPromise);
         }
         setPreviewManager(globalPreviewManager);
+        
+        // Initialize ActionRunner with the promise if not already created
+        if (!globalActionRunner) {
+          globalActionRunner = new ActionRunner(webcontainerPromise);
+          await globalActionRunner.initialize();
+        }
+        setActionRunner(globalActionRunner);
         
         // Wait for WebContainer to boot
         const container = await webcontainerPromise;
@@ -97,6 +109,7 @@ export function WebContainerProvider({ children }: WebContainerProviderProps) {
       // WebContainer already exists, just set the state
       setWebContainer(globalWebContainer);
       setPreviewManager(globalPreviewManager);
+      setActionRunner(globalActionRunner);
       setIsBooting(false);
     } else if (globalWebContainerPromise) {
       // WebContainer is booting, wait for it
@@ -104,6 +117,7 @@ export function WebContainerProvider({ children }: WebContainerProviderProps) {
         if (mounted) {
           setWebContainer(container);
           setPreviewManager(globalPreviewManager);
+          setActionRunner(globalActionRunner);
           setIsBooting(false);
         }
       }).catch(err => {
@@ -126,6 +140,7 @@ export function WebContainerProvider({ children }: WebContainerProviderProps) {
     isBooting,
     error,
     previewManager,
+    actionRunner,
   };
 
   return (

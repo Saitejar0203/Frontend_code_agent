@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { actionRunner, ActionRunner } from './ActionRunner';
+import { ActionRunner } from './ActionRunner';
 import { webcontainerManager } from '@/services/webcontainerService';
 import * as workbenchStore from '@/lib/stores/workbenchStore';
 
@@ -29,15 +29,17 @@ describe('ActionRunner', () => {
   });
 
   afterEach(() => {
-    actionRunner.abort();
-    actionRunner.clearActionHistory();
+    // ActionRunner instances are now created per test
+    // actionRunner.abort();
+    // actionRunner.clearActionHistory();
   });
 
   describe('initialization', () => {
     it('should initialize WebContainer successfully', async () => {
       const mockBoot = vi.mocked(webcontainerManager.boot);
       mockBoot.mockResolvedValue({} as any);
-
+      
+      const actionRunner = new ActionRunner(Promise.resolve({} as any));
       await actionRunner.initialize();
 
       expect(mockBoot).toHaveBeenCalled();
@@ -50,7 +52,8 @@ describe('ActionRunner', () => {
       const mockBoot = vi.mocked(webcontainerManager.boot);
       const error = new Error('Boot failed');
       mockBoot.mockRejectedValue(error);
-
+      
+      const actionRunner = new ActionRunner(Promise.reject(error));
       await expect(actionRunner.initialize()).rejects.toThrow('Boot failed');
       expect(workbenchStore.appendTerminalOutput).toHaveBeenCalledWith('❌ Failed to initialize WebContainer: Boot failed\n');
     });

@@ -3,7 +3,7 @@ import { useStore } from '@nanostores/react';
 import { workbenchStore, selectArtifact, removeArtifact } from '../lib/stores/workbenchStore';
 import type { ArtifactState } from '../lib/stores/workbenchStore';
 import type { BoltAction } from '../lib/runtime/types';
-import { actionRunner } from '../lib/runtime/actionRunner';
+import { useWebContainer } from './WebContainer/WebContainerProvider';
 import { 
   FileText, 
   Terminal, 
@@ -24,6 +24,7 @@ interface ArtifactProps {
 
 export function Artifact({ className = '' }: ArtifactProps) {
   const { artifacts, selectedArtifactId } = useStore(workbenchStore);
+  const { actionRunner } = useWebContainer();
   const [actionStatuses, setActionStatuses] = useState<Map<string, any>>(new Map());
   const actionsContainerRef = useRef<HTMLDivElement>(null);
   
@@ -48,33 +49,25 @@ export function Artifact({ className = '' }: ArtifactProps) {
 
   // Poll for action status updates
   useEffect(() => {
-    const interval = setInterval(() => {
-      if (actionRunner) {
-        const allStatuses = actionRunner.getAllActionStatuses();
-        const statusMap = new Map();
-        const previousStatuses = new Map(actionStatuses);
-        
-        allStatuses.forEach(status => {
-          const key = `${status.type}_${status.filePath || status.content}`;
-          statusMap.set(key, status);
-        });
-        
-        setActionStatuses(statusMap);
-        
-        // Check if any action just started running
-        const hasNewRunningAction = Array.from(statusMap.entries()).some(([key, status]) => {
-          const previousStatus = previousStatuses.get(key);
-          return status.status === 'running' && (!previousStatus || previousStatus.status !== 'running');
-        });
-        
-        if (hasNewRunningAction) {
-          setTimeout(scrollToRunningAction, 100); // Small delay to ensure DOM is updated
-        }
-      }
-    }, 500); // Update every 500ms
+    if (!actionRunner || !selectedArtifact) {
+      return;
+    }
 
+    const interval = setInterval(() => {
+      const allActionStatuses = actionRunner.getAllActionStatuses();
+      const statusMap = new Map<string, any>();
+      
+      // Create a map of action statuses keyed by action signature
+      allActionStatuses.forEach(actionState => {
+        const actionKey = `${actionState.type}_${actionState.filePath || actionState.content}`;
+        statusMap.set(actionKey, actionState);
+      });
+      
+      setActionStatuses(statusMap);
+    }, 500);
+    
     return () => clearInterval(interval);
-  }, [actionStatuses, selectedArtifact]);
+  }, [actionRunner, selectedArtifact]);
 
   if (artifactList.length === 0) {
     return (
@@ -154,12 +147,39 @@ interface ActionItemProps {
 function ActionItem({ action, index, status }: ActionItemProps) {
   const [isExpanded, setIsExpanded] = useState(false);
   
-  const getStatusIcon = () => {
-    if (!status) {
-      return <Clock className="w-4 h-4 text-gray-400" />;
+  const getActionStatus = (action: BoltAction) => {
+    // Use the status prop passed from parent component
+    if (status) {
+      return status.status;
     }
     
-    switch (status.status) {
+    // Fallback to action's current status
+    return action.status || 'pending';
+  };
+  
+  const getStatusText = () => {
+    const currentStatus = getActionStatus(action);
+    
+    switch (currentStatus) {
+      case 'pending':
+        return 'Pending';
+      case 'running':
+        return 'Running';
+      case 'complete':
+        return 'Complete';
+      case 'failed':
+        return 'Failed';
+      case 'aborted':
+        return 'Aborted';
+      default:
+        return 'Unknown';
+    }
+  };
+  
+  const getStatusIcon = () => {
+    const currentStatus = getActionStatus(action);
+    
+    switch (currentStatus) {
       case 'pending':
         return <Clock className="w-4 h-4 text-yellow-500" />;
       case 'running':

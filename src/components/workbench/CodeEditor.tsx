@@ -10,7 +10,8 @@ import {
   ChevronDown
 } from 'lucide-react';
 import { workbenchStore, setSelectedFile, updateFileContent, markFileSaved } from '@/lib/stores/workbenchStore';
-import { actionRunner } from '@/lib/runtime/ActionRunner';
+import { ActionRunner } from '@/lib/runtime/ActionRunner';
+import { useWebContainer } from '@/components/WebContainer/WebContainerProvider';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import {
@@ -35,6 +36,7 @@ interface EditorTab {
 
 export function CodeEditor({ className }: CodeEditorProps) {
   const { fileTree, selectedFile, modifiedFiles } = useStore(workbenchStore);
+  const { webcontainer } = useWebContainer();
   const [openTabs, setOpenTabs] = useState<EditorTab[]>([]);
   const [activeTabIndex, setActiveTabIndex] = useState(0);
   const [showFindReplace, setShowFindReplace] = useState(false);
@@ -152,10 +154,13 @@ export function CodeEditor({ className }: CodeEditorProps) {
   // Save current file
   const saveCurrentFile = useCallback(async () => {
     const activeTab = openTabs[activeTabIndex];
-    if (!activeTab || !activeTab.isDirty) return;
+    if (!activeTab || !activeTab.isDirty || !webcontainer) return;
 
     try {
       // Save to WebContainer filesystem through ActionRunner
+      const actionRunner = new ActionRunner(Promise.resolve(webcontainer));
+      await actionRunner.initialize();
+      
       const fileAction = {
         type: 'file' as const,
         filePath: activeTab.path,
@@ -177,14 +182,18 @@ export function CodeEditor({ className }: CodeEditorProps) {
       console.error(`❌ Failed to save file ${activeTab.path}:`, error);
       // TODO: Show error notification to user
     }
-  }, [openTabs, activeTabIndex]);
+  }, [openTabs, activeTabIndex, webcontainer]);
 
   // Save all files
   const saveAllFiles = useCallback(async () => {
     const dirtyTabs = openTabs.filter(tab => tab.isDirty);
+    if (!webcontainer) return;
     
     try {
       // Save all dirty files to WebContainer filesystem
+      const actionRunner = new ActionRunner(Promise.resolve(webcontainer));
+      await actionRunner.initialize();
+      
       const savePromises = dirtyTabs.map(async (tab) => {
         const fileAction = {
           type: 'file' as const,
@@ -211,7 +220,7 @@ export function CodeEditor({ className }: CodeEditorProps) {
       console.error('❌ Failed to save some files:', error);
       // TODO: Show error notification to user
     }
-  }, [openTabs]);
+  }, [openTabs, webcontainer]);
 
   // Handle Monaco Editor mount
   const handleEditorMount = (editor: any, monaco: any) => {

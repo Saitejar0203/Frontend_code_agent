@@ -167,9 +167,11 @@ export class StreamingMessageParser {
       if (state.insideAction) {
         let content = state.currentAction.content.trim();
         
-        // For shell actions, clean markdown code block syntax
+        // Clean markdown code block syntax for both file and shell actions
         if (state.currentAction.type === 'shell') {
           content = this.cleanShellCommand(content);
+        } else if (state.currentAction.type === 'file') {
+          content = this.cleanFileContent(content);
         }
         
         this.callbacks.onActionClose?.({
@@ -219,13 +221,16 @@ export class StreamingMessageParser {
       
       // For file actions, trigger immediately when we have meaningful content
       if (state.currentAction.type === 'file' && state.currentAction.filePath && currentLength > 10) {
+        // Clean file content before triggering update
+        const cleanedContent = this.cleanFileContent(state.currentAction.content);
+        
         this.callbacks.onActionContentUpdate?.({
           messageId,
           artifactId: state.currentArtifact?.id,
           action: {
             type: state.currentAction.type as 'file' | 'shell',
             filePath: state.currentAction.filePath,
-            content: state.currentAction.content,
+            content: cleanedContent,
           },
         });
       }
@@ -261,6 +266,25 @@ export class StreamingMessageParser {
     
     // Remove markdown code block syntax
     // Remove opening code block (```bash, ```sh, ```shell, etc.)
+    cleaned = cleaned.replace(/^```\w*\s*\n?/gm, '');
+    
+    // Remove closing code block
+    cleaned = cleaned.replace(/\n?```\s*$/gm, '');
+    
+    // Remove any remaining backticks at start/end
+    cleaned = cleaned.replace(/^`+|`+$/g, '');
+    
+    return cleaned.trim();
+  }
+
+  /**
+   * Clean file content by removing markdown code block syntax
+   */
+  private cleanFileContent(content: string): string {
+    let cleaned = content.trim();
+    
+    // Remove markdown code block syntax
+    // Remove opening code block (```json, ```html, ```css, ```js, ```typescript, etc.)
     cleaned = cleaned.replace(/^```\w*\s*\n?/gm, '');
     
     // Remove closing code block

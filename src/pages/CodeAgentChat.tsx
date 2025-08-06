@@ -7,7 +7,7 @@ import { useAuth } from '@/contexts/AuthContext';
 import { AuthGuard } from '../components/auth';
 import useMobileDetection from '../components/chat/mobile/useMobileDetection';
 import { WorkbenchLayout } from '../components/workbench/WorkbenchLayout';
-import { WebContainerProvider } from '../components/webcontainer/WebContainerProvider';
+import { WebContainerProvider, useWebContainer } from '../components/webcontainer/WebContainerProvider';
 
 import { useStore } from '@nanostores/react';
 import { chatStore, clearMessages, setGenerating, type Message } from '@/lib/stores/chatStore';
@@ -16,7 +16,9 @@ import { sendChatMessage } from '@/services/codeAgentService';
 
 // Interfaces moved to service layer - keeping component clean
 
-const CodeAgentChat: React.FC = () => {
+// Inner component that has access to WebContainer context
+const CodeAgentChatInner: React.FC = () => {
+  const { webcontainer, actionRunner } = useWebContainer();
   const [inputValue, setInputValue] = useState('');
   const [isInChatMode, setIsInChatMode] = useState(false);
   const { isMobile } = useMobileDetection();
@@ -60,7 +62,7 @@ const CodeAgentChat: React.FC = () => {
     setIsInChatMode(true);
     
     // Use the service function to handle all streaming logic
-    await sendChatMessage(userInput);
+    await sendChatMessage(userInput, webcontainer, actionRunner);
   };
   
   // All streaming and parsing logic moved to codeAgentService.ts
@@ -197,13 +199,20 @@ const CodeAgentChat: React.FC = () => {
         ) : (
           /* Advanced Workbench Layout with resizable panels */
           <div className="flex-1 overflow-hidden">
-            <WebContainerProvider>
-              <WorkbenchLayout className="h-full" />
-            </WebContainerProvider>
+            <WorkbenchLayout className="h-full" />
           </div>
         )}
       </div>
     </AuthGuard>
+  );
+};
+
+// Main component that provides WebContainer context
+const CodeAgentChat: React.FC = () => {
+  return (
+    <WebContainerProvider>
+      <CodeAgentChatInner />
+    </WebContainerProvider>
   );
 };
 

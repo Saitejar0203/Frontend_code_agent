@@ -12,7 +12,6 @@ import {
 import { FileSystemTree, WebContainer } from '@webcontainer/api';
 
 import { createScopedLogger } from './logger';
-import { webcontainer } from '@/lib/webcontainer';
 
 // Helper function to decode HTML entities
 function decodeHtmlEntities(text: string): string {
@@ -688,4 +687,7 @@ class ActionRunner {
   }
 }
 
-export const actionRunner = new ActionRunner(webcontainer);
+// ActionRunner instances should be created with a WebContainer promise
+// Use the WebContainerProvider to get the shared instance
+
+export { ActionRunner };

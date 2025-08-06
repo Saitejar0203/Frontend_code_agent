@@ -1,9 +1,10 @@
 // frontend/src/services/codeAgentService.ts
 import { StreamingMessageParser, ParserCallbacks } from '@/lib/runtime/StreamingMessageParser';
-import { actionRunner } from '@/lib/runtime/ActionRunner';
+import { ActionRunner } from '@/lib/runtime/ActionRunner';
 import { addMessage, updateMessage, setGenerating, setThinking, type Message } from '@/lib/stores/chatStore';
 import { chatStore } from '@/lib/stores/chatStore';
 import { addArtifact, addActionToArtifact, addOrUpdateFileFromAction } from '@/lib/stores/workbenchStore';
+import { WebContainer } from '@webcontainer/api';
 
 export interface GenerateProjectRequest {
   messages: Array<{
@@ -31,7 +32,7 @@ export interface GeminiParserCallbacks extends ParserCallbacks {
  * Main function to handle chat with the AI agent
  * This replaces the streaming logic that was previously in CodeAgentChat.tsx
  */
-export async function sendChatMessage(userInput: string): Promise<void> {
+export async function sendChatMessage(userInput: string, webcontainer?: WebContainer, actionRunner?: ActionRunner): Promise<void> {
   console.log('🚀 sendChatMessage called with input:', userInput);
   
   // Add user message to chat store
@@ -48,15 +49,27 @@ export async function sendChatMessage(userInput: string): Promise<void> {
   setThinking(true);
   console.log('⏳ Set generating to true and thinking to true');
   
-  // Initialize ActionRunner
-  try {
-    await actionRunner.initialize();
-    console.log('ActionRunner initialized successfully');
-  } catch (error) {
-    console.error('Failed to initialize ActionRunner:', error);
+  // Validate WebContainer and ActionRunner are provided
+  if (!webcontainer) {
+    console.error('WebContainer not provided to sendChatMessage');
     const errorMessage: Message = {
       id: `${Date.now()}-init-error`,
-      content: `❌ Failed to initialize ActionRunner: ${error}`,
+      content: `❌ WebContainer not available. Please wait for initialization.`,
+      sender: 'agent',
+      timestamp: new Date(),
+      type: 'error'
+    };
+    addMessage(errorMessage);
+    setGenerating(false);
+    setThinking(false);
+    return;
+  }
+  
+  if (!actionRunner) {
+    console.error('ActionRunner not provided to sendChatMessage');
+    const errorMessage: Message = {
+      id: `${Date.now()}-init-error`,
+      content: `❌ ActionRunner not available. Please wait for initialization.`,
       sender: 'agent',
       timestamp: new Date(),
       type: 'error'
