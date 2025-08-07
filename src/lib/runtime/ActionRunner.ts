@@ -327,6 +327,32 @@ class ActionRunner {
   }
 
   /**
+   * Aborts pending actions for a follow-up request, preserving long-running processes.
+   * This clears the queues to allow new actions to be processed without killing
+   * the active development server.
+   */
+  public abortFollowUp(): void {
+    this.logger.info('🛑 Aborting pending actions for follow-up...');
+
+    // 1. Clear the internal queues of actions that haven't started yet.
+    this.fileActionQueue = [];
+    this.shellActionQueue = [];
+
+    // 2. Mark any 'pending' actions in the main tracking map as 'aborted'.
+    //    This leaves 'running' actions (like the dev server) untouched.
+    this.actions.forEach((action, id) => {
+      if (action.status === 'pending') {
+        this.updateAction(id, { status: 'aborted' });
+      }
+    });
+
+    // 3. Reset the processing flag to ensure the queue can run again.
+    this.isProcessing = false;
+
+    appendTerminalOutput('\n🔄 Ready for new instructions...\n');
+  }
+
+  /**
    * Clear all action history and reset state
    * This is useful when starting a new conversation or artifact
    */
@@ -349,6 +375,50 @@ class ActionRunner {
     }
     
     appendTerminalOutput('\n🔄 ActionRunner state reset\n');
+  }
+
+  /**
+   * Reboot the WebContainer by clearing the filesystem and resetting state
+   * This is used when starting a completely new conversation/project
+   */
+  public async reboot(): Promise<void> {
+    this.logger.info('🔄 Rebooting WebContainer and clearing filesystem');
+    
+    try {
+      // First abort all running actions
+      this.abort();
+      
+      const container = await this.#webcontainer;
+      
+      // Clear the WebContainer filesystem by removing all files and directories
+      // We'll keep only essential system files that WebContainer needs
+      const rootFiles = await container.fs.readdir('/');
+      
+      for (const file of rootFiles) {
+        // Skip system directories that WebContainer needs
+        if (file !== 'tmp' && file !== 'proc' && file !== 'dev') {
+          try {
+            await container.fs.rm(file, { recursive: true, force: true });
+          } catch (error) {
+            // Some files might not be removable, that's okay
+            this.logger.debug(`Could not remove ${file}:`, error);
+          }
+        }
+      }
+      
+      // Reset the file tree in the workbench store
+      setFileTree([]);
+      
+      // Reset all state
+      this.resetState();
+      
+      this.logger.info('✅ WebContainer reboot completed');
+      appendTerminalOutput('\n✅ WebContainer reboot completed\n');
+    } catch (error) {
+      this.logger.error('❌ Error during WebContainer reboot:', error);
+      appendTerminalOutput(`\n❌ Error during WebContainer reboot: ${error instanceof Error ? error.message : 'Unknown error'}\n`);
+      throw error;
+    }
   }
 
   /**

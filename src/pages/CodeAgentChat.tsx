@@ -11,7 +11,7 @@ import { WebContainerProvider, useWebContainer } from '../components/webcontaine
 
 import { useStore } from '@nanostores/react';
 import { chatStore, startNewChat, setGenerating, type Message } from '@/lib/stores/chatStore';
-import { workbenchStore, setFileTree, clearArtifacts } from '@/lib/stores/workbenchStore';
+import { workbenchStore, setFileTree, clearArtifacts, resetWorkbenchForNewConversation } from '@/lib/stores/workbenchStore';
 import { sendChatMessage } from '@/services/codeAgentService';
 
 // Interfaces moved to service layer - keeping component clean
@@ -44,14 +44,31 @@ const CodeAgentChatInner: React.FC = () => {
     icon: "💻"
   };
 
-  const handleNewChat = () => {
-    // Use the new startNewChat function that clears conversation history too
-    startNewChat();
-    clearArtifacts();
-    setIsInChatMode(false);
-    setInputValue('');
-    setFileTree([]);
-    console.log('🔄 Started new chat - cleared conversation history and UI state');
+  const handleNewChat = async () => {
+    try {
+      // Use the new startNewChat function that clears conversation history too
+      startNewChat();
+      
+      // Reset workbench UI state (artifacts, running commands, active tab)
+      resetWorkbenchForNewConversation();
+      
+      // Reset local component state
+      setIsInChatMode(false);
+      setInputValue('');
+      
+      // Reboot the WebContainer to clear filesystem for a truly fresh start
+      if (actionRunner) {
+        await actionRunner.reboot();
+      }
+      
+      console.log('🔄 Started new chat - cleared conversation history, UI state, and WebContainer filesystem');
+    } catch (error) {
+      console.error('❌ Error during new chat initialization:', error);
+      // Still reset UI state even if WebContainer reboot fails
+      resetWorkbenchForNewConversation();
+      setIsInChatMode(false);
+      setInputValue('');
+    }
   };
 
   const handleSubmit = async (e: React.FormEvent) => {

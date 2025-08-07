@@ -53,15 +53,12 @@ export async function sendChatMessage(userInput: string, webcontainer?: WebConta
   setThinking(true);
   console.log('⏳ Set generating to true and thinking to true');
   
-  // Abort any previous actions and clear queues before starting new processing
+  // ----------------- START OF CORRECTED FIX -----------------
   if (actionRunner) {
-    console.log('🛑 Aborting previous actions before starting new message processing');
-    actionRunner.abort();
+    console.log('🔄 Processing follow-up request, clearing pending actions...');
+    actionRunner.abortFollowUp(); // Use the new selective abort
   }
-  
-  // Reset workbench state for new conversation
-  console.log('🔄 Resetting workbench state for new conversation');
-  resetWorkbenchForNewConversation();
+  // ------------------ END OF CORRECTED FIX ------------------
   
   // Validate WebContainer and ActionRunner are provided
   if (!webcontainer) {
