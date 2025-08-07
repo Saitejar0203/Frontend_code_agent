@@ -12,7 +12,7 @@ export default defineConfig(({ mode }) => ({
     port: 8081,
     headers: {
       'Cross-Origin-Opener-Policy': 'same-origin',
-      'Cross-Origin-Embedder-Policy': 'require-corp',
+      'Cross-Origin-Embedder-Policy': 'credentialless',
     },
   },
   plugins: [
@@ -25,14 +25,14 @@ export default defineConfig(({ mode }) => ({
       configureServer(server) {
         server.middlewares.use((_req, res, next) => {
           res.setHeader('Cross-Origin-Opener-Policy', 'same-origin');
-          res.setHeader('Cross-Origin-Embedder-Policy', 'require-corp');
+          res.setHeader('Cross-Origin-Embedder-Policy', 'credentialless');
           next();
         });
       },
       configurePreviewServer(server) {
         server.middlewares.use((_req, res, next) => {
           res.setHeader('Cross-Origin-Opener-Policy', 'same-origin');
-          res.setHeader('Cross-Origin-Embedder-Policy', 'require-corp');
+          res.setHeader('Cross-Origin-Embedder-Policy', 'credentialless');
           next();
         });
       },
@@ -48,7 +48,7 @@ export default defineConfig(({ mode }) => ({
     port: 8081,
     headers: {
       'Cross-Origin-Opener-Policy': 'same-origin',
-      'Cross-Origin-Embedder-Policy': 'require-corp',
+      'Cross-Origin-Embedder-Policy': 'credentialless',
     },
   },
   // Environment variables are automatically loaded based on mode:

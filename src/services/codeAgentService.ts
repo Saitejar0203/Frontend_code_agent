@@ -5,6 +5,7 @@ import { addMessage, updateMessage, setGenerating, setThinking, addToConversatio
 import { chatStore } from '@/lib/stores/chatStore';
 import { addArtifact, addArtifactAndPrepareExecution, addActionToArtifact, addOrUpdateFileFromAction, resetWorkbenchForNewConversation } from '@/lib/stores/workbenchStore';
 import { WebContainer } from '@webcontainer/api';
+import { MAX_RESPONSE_SEGMENTS, CONTINUE_PROMPT, isTruncationFinishReason, isNullResponse, MAX_VALIDATION_ITERATIONS, VALIDATION_PROMPT, isValidationApproved } from '@/lib/constants/continuation';
 
 export interface GenerateProjectRequest {
   messages: Array<{
@@ -244,8 +245,57 @@ export async function sendChatMessage(userInput: string, webcontainer?: WebConta
   }
 }
 
-export async function streamAgentResponse(prompt: string, callbacks: GeminiParserCallbacks, conversationHistory: Array<{role: string, content: string}> = []) {
-  console.log('🔄 streamAgentResponse started with prompt:', prompt);
+/**
+ * Performs validation loop to check code quality and completeness
+ */
+async function performValidationLoop(
+  conversationHistory: Array<{role: string, content: string}>,
+  callbacks: GeminiParserCallbacks,
+  segmentCount: number = 0
+): Promise<string> {
+  console.log('🔍 Starting validation loop...');
+  let validationResponse = '';
+  
+  for (let i = 0; i < MAX_VALIDATION_ITERATIONS; i++) {
+    console.log(`🔍 Validation iteration ${i + 1}/${MAX_VALIDATION_ITERATIONS}`);
+    
+    // Build validation history with entire conversation + validation prompt
+    const validationHistory = [
+      ...conversationHistory,
+      { role: 'user', content: VALIDATION_PROMPT }
+    ];
+    
+    // Stream validation response
+    const currentValidationResponse = await streamAgentResponse(
+      VALIDATION_PROMPT,
+      callbacks,
+      validationHistory,
+      segmentCount + 1
+    );
+    
+    validationResponse += currentValidationResponse;
+    
+    // Check if validation is approved
+    if (isValidationApproved(currentValidationResponse)) {
+      console.log('✅ Validation approved, stopping validation loop');
+      break;
+    }
+    
+    // Add validation response to history for next iteration
+    conversationHistory.push({
+      role: 'assistant',
+      content: currentValidationResponse
+    });
+    
+    console.log(`🔄 Validation iteration ${i + 1} completed, continuing...`);
+  }
+  
+  console.log('🏁 Validation loop completed');
+  return validationResponse;
+}
+
+export async function streamAgentResponse(prompt: string, callbacks: GeminiParserCallbacks, conversationHistory: Array<{role: string, content: string}> = [], segmentCount: number = 0) {
+  console.log('🔄 streamAgentResponse started with prompt:', prompt, 'segment:', segmentCount);
   const parser = new StreamingMessageParser(callbacks);
   // Use the new Gemini API endpoint
   const apiBaseUrl = 'http://localhost:8002';
@@ -281,6 +331,7 @@ export async function streamAgentResponse(prompt: string, callbacks: GeminiParse
     const decoder = new TextDecoder();
     let buffer = '';
     let fullResponse = '';
+    let lastFinishReason: string | null = null;
     const messageId = `msg_${Date.now()}`;
 
     while (true) {
@@ -300,14 +351,54 @@ export async function streamAgentResponse(prompt: string, callbacks: GeminiParse
           if (line.startsWith('data: ')) {
             const data = line.slice(6);
             console.log('📦 Extracted data:', data);
-            if (data.trim() === '{"done": true}') {
-              console.log('🏁 Received completion signal');
-              callbacks.onComplete?.();
-              return fullResponse;
-            }
             try {
               const parsed = JSON.parse(data);
               console.log('✅ Parsed JSON data:', parsed);
+              
+              // Handle completion signal
+              if (parsed.done) {
+                console.log('🏁 Received completion signal with finish_reason:', parsed.finish_reason);
+                lastFinishReason = parsed.finish_reason;
+                
+                // Check if we need to continue due to truncation
+                if (isTruncationFinishReason(lastFinishReason) || isNullResponse(fullResponse)) {
+                  if (segmentCount < MAX_RESPONSE_SEGMENTS - 1) {
+                    console.log('🔄 Response truncated, continuing...', { finishReason: lastFinishReason, segmentCount });
+                    
+                    // Update conversation history with current response
+                    const updatedHistory = [...conversationHistory];
+                    if (fullResponse.trim()) {
+                      updatedHistory.push({ role: 'assistant', content: fullResponse });
+                    }
+                    updatedHistory.push({ role: 'user', content: CONTINUE_PROMPT });
+                    
+                    // Continue with the same callbacks and updated history
+                    const continuationResponse = await streamAgentResponse(CONTINUE_PROMPT, callbacks, updatedHistory, segmentCount + 1);
+                    return fullResponse + continuationResponse;
+                  } else {
+                    console.warn('⚠️ Maximum continuation segments reached, stopping');
+                  }
+                }
+                
+                // Check if we need to perform validation (only for STOP finish reason and initial segments)
+                if (lastFinishReason === 'STOP' && segmentCount === 0 && fullResponse.trim()) {
+                  console.log('🔍 Finish reason is STOP, starting validation loop...');
+                  
+                  // Update conversation history with current response
+                  const updatedHistory = [...conversationHistory];
+                  updatedHistory.push({ role: 'assistant', content: fullResponse });
+                  
+                  // Perform validation loop
+                  const validationResponse = await performValidationLoop(updatedHistory, callbacks, segmentCount);
+                  
+                  // Return combined response
+                  return fullResponse + validationResponse;
+                }
+                
+                callbacks.onComplete?.();
+                return fullResponse;
+              }
+              
               // Handle Gemini API response format
               if (parsed.chunk) {
                 const chunk = parsed.chunk;
@@ -351,9 +442,44 @@ export async function streamAgentResponse(prompt: string, callbacks: GeminiParse
       for (const line of lines) {
         if (line.trim() && line.startsWith('data: ')) {
           const data = line.slice(6);
-          if (data.trim() === '{"done": true}') continue;
           try {
             const parsed = JSON.parse(data);
+            if (parsed.done) {
+              lastFinishReason = parsed.finish_reason;
+              // Check for continuation after processing final buffer
+              if (isTruncationFinishReason(lastFinishReason) || isNullResponse(fullResponse)) {
+                if (segmentCount < MAX_RESPONSE_SEGMENTS - 1) {
+                  console.log('🔄 Response truncated in final buffer, continuing...', { finishReason: lastFinishReason, segmentCount });
+                  
+                  const updatedHistory = [...conversationHistory];
+                  if (fullResponse.trim()) {
+                    updatedHistory.push({ role: 'assistant', content: fullResponse });
+                  }
+                  updatedHistory.push({ role: 'user', content: CONTINUE_PROMPT });
+                  
+                  const continuationResponse = await streamAgentResponse(CONTINUE_PROMPT, callbacks, updatedHistory, segmentCount + 1);
+                  return fullResponse + continuationResponse;
+                } else {
+                  console.warn('⚠️ Maximum continuation segments reached in final buffer, stopping');
+                }
+              }
+              
+              // Check if we need to perform validation (only for STOP finish reason and initial segments)
+              if (lastFinishReason === 'STOP' && segmentCount === 0 && fullResponse.trim()) {
+                console.log('🔍 Finish reason is STOP in final buffer, starting validation loop...');
+                
+                // Update conversation history with current response
+                const updatedHistory = [...conversationHistory];
+                updatedHistory.push({ role: 'assistant', content: fullResponse });
+                
+                // Perform validation loop
+                const validationResponse = await performValidationLoop(updatedHistory, callbacks, segmentCount);
+                
+                // Return combined response
+                return fullResponse + validationResponse;
+              }
+              continue;
+            }
             if (parsed.chunk) {
               fullResponse += parsed.chunk;
               parser.parse(messageId, parsed.chunk);
@@ -384,97 +510,9 @@ export async function streamAgentResponse(prompt: string, callbacks: GeminiParse
 }
 
 export async function generateStructuredProject(prompt: string, callbacks: GeminiParserCallbacks) {
-  const parser = new StreamingMessageParser(callbacks);
-  // Use the new Gemini API endpoint
-  const apiBaseUrl = 'http://localhost:8002';
-  
+  // Use the streamAgentResponse function which now handles continuation automatically
   try {
-    const response = await fetch(`${apiBaseUrl}/api/v1/chat`, {
-      method: 'POST',
-      headers: { 
-        'Content-Type': 'application/json',
-        'Accept': 'text/event-stream',
-      },
-      body: JSON.stringify({
-        message: prompt,
-        conversation_history: [],
-        stream: true,
-      }),
-    });
-
-    if (!response.ok) {
-      throw new Error(`HTTP error! status: ${response.status}`);
-    }
-
-    if (!response.body) {
-      throw new Error('Response body is null');
-    }
-
-    const reader = response.body.getReader();
-    const decoder = new TextDecoder();
-    let buffer = '';
-    const messageId = `msg_${Date.now()}`;
-
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      
-      buffer += decoder.decode(value, { stream: true });
-      
-      const lines = buffer.split('\n');
-      buffer = lines.pop() || '';
-      
-      for (const line of lines) {
-        if (line.trim() && line.startsWith('data: ')) {
-          const data = line.slice(6);
-          if (data.trim() === '{"done": true}') {
-            callbacks.onComplete?.();
-            return;
-          }
-          try {
-            const parsed = JSON.parse(data);
-            if (parsed.chunk) {
-              // Parse the chunk content for bolt-style XML tags
-              parser.parse(messageId, parsed.chunk);
-            }
-          } catch (e) {
-            // If not JSON, treat as raw text and parse for bolt tags
-            parser.parse(messageId, data);
-          }
-        }
-      }
-    }
-    
-    // --- START OF THE FIX ---
-    // After the loop, the stream is done, but the decoder might have remaining bytes.
-    // Flush the decoder's internal buffer by calling it without arguments.
-    buffer += decoder.decode();
-
-    // Process any final data that was flushed from the buffer. This ensures
-    // the parser sees the very end of the message, including the final closing tags.
-    if (buffer.trim()) {
-      const lines = buffer.split('\n');
-      for (const line of lines) {
-        if (line.trim() && line.startsWith('data: ')) {
-          const data = line.slice(6);
-          if (data.trim() === '{"done": true}') continue;
-          try {
-            const parsed = JSON.parse(data);
-            if (parsed.chunk) {
-              parser.parse(messageId, parsed.chunk);
-            }
-          } catch (e) {
-            if (data.trim() && data !== '[DONE]') {
-              parser.parse(messageId, data);
-            }
-          }
-        }
-      }
-    }
-
-    // Now that all data has been fully parsed, we can safely call onComplete.
-    callbacks.onComplete?.();
-    // --- END OF THE FIX ---
+    await streamAgentResponse(prompt, callbacks, []);
   } catch (error) {
     console.error('Error in generateStructuredProject:', error);
     callbacks.onError?.(error instanceof Error ? error.message : 'Unknown error');
