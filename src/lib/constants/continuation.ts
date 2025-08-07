@@ -10,17 +10,20 @@ export const MAX_RESPONSE_SEGMENTS = 5;
  * Continue prompt to append when requesting continuation from the LLM
  * This instructs the model to continue from where it left off
  */
-export const CONTINUE_PROMPT = `Your previous response was truncated due to a token limit. Your task is to continue generating the response by following these critical rules: 
+export const CONTINUE_PROMPT = `Your previous response was truncated due to a token limit. Your task is to continue generating the response by following these critical rules, in order of precedence: 
  
- 1.  **Check for Incomplete Tags:** If the truncation occurred *inside* a \`<boltArtifact>\` or \`<boltAction>\` block, you **MUST** discard the partial block and restart the **most recent, outermost incomplete tag** from its beginning. 
-     * *Example:* If you were inside a \`<boltAction>\` that was itself inside a \`<boltArtifact>\`, you must restart the entire \`<boltArtifact>\` block. 
+ 1.  **If Inside an Action Tag:** If the truncation occurred *inside* a \`<boltAction>...\</boltAction>\` block, you **MUST** discard the partial action and restart by re-emitting the **entire, most recent \`<boltAction>\` tag** from its beginning. Do not re-emit the parent \`<boltArtifact>\` or any actions that were already completed. 
  
- 2.  **Continue if No Incomplete Tags:** If the previous response ended cleanly (not inside a tag), continue generating from the exact point of interruption. 
+     * *Example:* If your last output was \`...<boltAction type="file">const x = 1;\` (and was cut off), you must restart with the full \`<boltAction type="file" ...>...\</boltAction>\`. 
  
- 3.  **Strict Formatting Rules:** 
-     * **DO NOT** repeat any content that was successfully and completely sent before the point of interruption. 
-     * **DO NOT** add any conversational text, apologies, or explanations (e.g., "Okay, restarting the artifact..."). 
-    .`;
+ 2.  **If Generating Plain Text:** If the truncation occurred while generating plain text (text for the chat UI, *outside* of any action tags), you **MUST** continue generating from the exact point of interruption. 
+ 
+     * *Example:* If your last output was \`Here is the first file:\`, you should continue with whatever came next, likely a \`<boltAction>\` tag. 
+ 
+ **CRITICAL FORMATTING RULES:** 
+ - **DO NOT** repeat any content that was successfully and completely sent before the point of interruption. 
+ - **DO NOT** add any conversational text, apologies, or explanations (e.g., "Okay, restarting the action..."). Your response must be a direct and seamless continuation. 
+ `;
 
 /**
  * Finish reasons that indicate the response was truncated and should be continued
@@ -70,7 +73,7 @@ export const VALIDATION_PROMPT = `Review the entire conversation between human a
 - Missing functionality or edge cases
 
 If the code is satisfactory and meets all requirements, respond with <validation_complete>.
-If improvements are needed, provide specific fixes and emit complete files with modifications.`;
+If improvements are needed, provide ONLY the necessary <boltAction> tags with complete file modifications. Do NOT include explanatory text`;
 
 /**
  * Tags that indicate validation is complete and approved

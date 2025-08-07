@@ -380,9 +380,11 @@ export async function streamAgentResponse(prompt: string, callbacks: GeminiParse
                   }
                 }
                 
-                // Check if we need to perform validation (only for STOP finish reason and initial segments)
-                if (lastFinishReason === 'STOP' && segmentCount === 0 && fullResponse.trim()) {
-                  console.log('🔍 Finish reason is STOP, starting validation loop...');
+                // Check if we need to perform validation
+                const isValidationCall = prompt === VALIDATION_PROMPT;
+                
+                if (lastFinishReason === 'STOP' && !isValidationCall && fullResponse.trim()) {
+                  console.log('🔍 Finish reason is STOP, starting validation loop for completed multi-segment response...');
                   
                   // Update conversation history with current response
                   const updatedHistory = [...conversationHistory];
@@ -464,9 +466,11 @@ export async function streamAgentResponse(prompt: string, callbacks: GeminiParse
                 }
               }
               
-              // Check if we need to perform validation (only for STOP finish reason and initial segments)
-              if (lastFinishReason === 'STOP' && segmentCount === 0 && fullResponse.trim()) {
-                console.log('🔍 Finish reason is STOP in final buffer, starting validation loop...');
+              // Check if we need to perform validation
+              const isValidationCall = prompt === VALIDATION_PROMPT;
+              
+              if (lastFinishReason === 'STOP' && !isValidationCall && fullResponse.trim()) {
+                console.log('🔍 Finish reason is STOP in final buffer, starting validation loop for completed multi-segment response...');
                 
                 // Update conversation history with current response
                 const updatedHistory = [...conversationHistory];
