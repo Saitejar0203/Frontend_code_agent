@@ -7,6 +7,133 @@ import { addArtifact, addArtifactAndPrepareExecution, addActionToArtifact, addOr
 import { WebContainer } from '@webcontainer/api';
 import { MAX_RESPONSE_SEGMENTS, CONTINUE_PROMPT, isTruncationFinishReason, isNullResponse, MAX_VALIDATION_ITERATIONS, VALIDATION_PROMPT, isValidationApproved } from '@/lib/constants/continuation';
 
+// Message queue for handling requests when WebContainer is not ready
+interface QueuedMessage {
+  id: string;
+  userInput: string;
+  timestamp: Date;
+  messageId: string; // ID of the "model is thinking" message
+}
+
+class MessageQueue {
+  private queue: QueuedMessage[] = [];
+  private isProcessing = false;
+  private webcontainerReadyCallbacks: (() => void)[] = [];
+
+  enqueue(userInput: string): string {
+    const queuedMessage: QueuedMessage = {
+      id: `queued_${Date.now()}_${Math.random()}`,
+      userInput,
+      timestamp: new Date(),
+      messageId: '' // No longer used since we're not creating thinking messages
+    };
+
+    // Add user message to chat
+    const userMessage: Message = {
+      id: `${Date.now()}-user`,
+      content: userInput,
+      sender: 'user',
+      timestamp: new Date()
+    };
+    addMessage(userMessage);
+    addToConversationHistory('user', userInput);
+
+    // Set UI state to show "model is thinking" (relies on ThinkingAnimation component)
+    setGenerating(true);
+    setThinking(true);
+
+    this.queue.push(queuedMessage);
+    console.log('📥 Message queued:', queuedMessage.id, 'Queue size:', this.queue.length);
+    
+    return queuedMessage.id;
+  }
+
+  dequeue(messageId: string): boolean {
+    const index = this.queue.findIndex(msg => msg.id === messageId);
+    if (index !== -1) {
+      this.queue.splice(index, 1);
+      
+      // Reset UI state if queue is empty
+      if (this.queue.length === 0) {
+        setGenerating(false);
+        setThinking(false);
+      }
+      
+      console.log('🗑️ Message dequeued:', messageId, 'Queue size:', this.queue.length);
+      return true;
+    }
+    return false;
+  }
+
+  async processQueue(webcontainer: WebContainer, actionRunner: ActionRunner): Promise<void> {
+    if (this.isProcessing || this.queue.length === 0) {
+      return;
+    }
+
+    this.isProcessing = true;
+    console.log('🔄 Processing message queue, size:', this.queue.length);
+
+    // Process messages in FIFO order
+    while (this.queue.length > 0) {
+      const queuedMessage = this.queue.shift()!;
+      console.log('⚡ Processing queued message:', queuedMessage.id);
+
+      try {
+        // Process the actual message
+        await sendChatMessageInternal(queuedMessage.userInput, webcontainer, actionRunner, true);
+      } catch (error) {
+        console.error('❌ Error processing queued message:', queuedMessage.id, error);
+        
+        // Add error message
+        const errorMessage: Message = {
+          id: `${Date.now()}-error`,
+          content: 'Sorry, I encountered an error while processing your message. Please try again.',
+          sender: 'agent',
+          timestamp: new Date(),
+          type: 'error'
+        };
+        addMessage(errorMessage);
+      }
+    }
+
+    this.isProcessing = false;
+    console.log('✅ Message queue processing completed');
+  }
+
+  onWebContainerReady(callback: () => void): void {
+    this.webcontainerReadyCallbacks.push(callback);
+  }
+
+  notifyWebContainerReady(webcontainer: WebContainer, actionRunner: ActionRunner): void {
+    console.log('🚀 WebContainer ready, processing queue...');
+    this.processQueue(webcontainer, actionRunner);
+    
+    // Notify all callbacks
+    this.webcontainerReadyCallbacks.forEach(callback => {
+      try {
+        callback();
+      } catch (error) {
+        console.error('Error in WebContainer ready callback:', error);
+      }
+    });
+    this.webcontainerReadyCallbacks = [];
+  }
+
+  getQueueSize(): number {
+    return this.queue.length;
+  }
+
+  clear(): void {
+    this.queue = [];
+    setGenerating(false);
+    setThinking(false);
+    console.log('🧹 Message queue cleared');
+  }
+}
+
+// Global message queue instance
+const messageQueue = new MessageQueue();
+
 export interface GenerateProjectRequest {
   messages: Array<{
     role: 'user' | 'assistant';
@@ -33,22 +160,49 @@ export interface GeminiParserCallbacks extends ParserCallbacks {
  * Main function to handle chat with the AI agent
  * This replaces the streaming logic that was previously in CodeAgentChat.tsx
  */
-export async function sendChatMessage(userInput: string, webcontainer?: WebContainer, actionRunner?: ActionRunner): Promise<void> {
+export async function sendChatMessage(
+  userInput: string,
+  webcontainer?: WebContainer,
+  actionRunner?: ActionRunner
+): Promise<void> {
   console.log('🚀 sendChatMessage called with input:', userInput);
   
-  // Add user message to chat store
-  const userMessage: Message = {
-    id: Date.now().toString(),
-    content: userInput,
-    sender: 'user',
-    timestamp: new Date()
-  };
+  // If WebContainer or ActionRunner is not available, queue the message
+  if (!webcontainer || !actionRunner) {
+    console.log('⏳ WebContainer or ActionRunner not ready, queuing message...');
+    const queuedId = messageQueue.enqueue(userInput);
+    console.log('📥 Message queued with ID:', queuedId);
+    return;
+  }
   
-  console.log('📝 Adding user message to store:', userMessage);
-  addMessage(userMessage);
+  // If both are available, process immediately
+  await sendChatMessageInternal(userInput, webcontainer, actionRunner);
+}
+
+/**
+ * Internal function for actual message processing
+ */
+async function sendChatMessageInternal(userInput: string, webcontainer: WebContainer, actionRunner: ActionRunner, fromQueue: boolean = false): Promise<void> {
+  console.log('🚀 sendChatMessageInternal called with input:', userInput, 'fromQueue:', fromQueue);
   
-  // Add user message to conversation history
-  addToConversationHistory('user', userInput);
+  // Only add user message if not coming from queue (to avoid duplication)
+  if (!fromQueue) {
+    // Add user message to chat store
+    const userMessage: Message = {
+      id: Date.now().toString(),
+      content: userInput,
+      sender: 'user',
+      timestamp: new Date()
+    };
+    
+    console.log('📝 Adding user message to store:', userMessage);
+    addMessage(userMessage);
+    
+    // Add user message to conversation history
+    addToConversationHistory('user', userInput);
+  } else {
+    console.log('📝 Skipping user message addition (already added during enqueue)');
+  }
   
   setGenerating(true);
   setThinking(true);
@@ -60,37 +214,6 @@ export async function sendChatMessage(userInput: string, webcontainer?: WebConta
     actionRunner.abortFollowUp(); // Use the new selective abort
   }
   // ------------------ END OF CORRECTED FIX ------------------
-  
-  // Validate WebContainer and ActionRunner are provided
-  if (!webcontainer) {
-    console.error('WebContainer not provided to sendChatMessage');
-    const errorMessage: Message = {
-      id: `${Date.now()}-init-error`,
-      content: `❌ WebContainer not available. Please wait for initialization.`,
-      sender: 'agent',
-      timestamp: new Date(),
-      type: 'error'
-    };
-    addMessage(errorMessage);
-    setGenerating(false);
-    setThinking(false);
-    return;
-  }
-  
-  if (!actionRunner) {
-    console.error('ActionRunner not provided to sendChatMessage');
-    const errorMessage: Message = {
-      id: `${Date.now()}-init-error`,
-      content: `❌ ActionRunner not available. Please wait for initialization.`,
-      sender: 'agent',
-      timestamp: new Date(),
-      type: 'error'
-    };
-    addMessage(errorMessage);
-    setGenerating(false);
-    setThinking(false);
-    return;
-  }
   
   try {
     console.log('🚀 Starting project generation with input:', userInput);
@@ -245,6 +368,31 @@ export async function sendChatMessage(userInput: string, webcontainer?: WebConta
   }
 }
 
+// Export the message queue for external access
+export { messageQueue };
+
+/**
+ * Stop all queued messages and clear the queue
+ */
+export function stopQueuedMessages(): void {
+  console.log('🛑 Stopping all queued messages');
+  messageQueue.clear();
+}
+
+/**
+ * Get the current queue size
+ */
+export function getQueueSize(): number {
+  return messageQueue.getQueueSize();
+}
+
+/**
+ * Check if there are any queued messages
+ */
+export function hasQueuedMessages(): boolean {
+  return messageQueue.getQueueSize() > 0;
+}
+
 /**
  * Performs validation loop to check code quality and completeness
  */
@@ -259,10 +407,17 @@ async function performValidationLoop(
   for (let i = 0; i < MAX_VALIDATION_ITERATIONS; i++) {
     console.log(`🔍 Validation iteration ${i + 1}/${MAX_VALIDATION_ITERATIONS}`);
     
-    // Build validation history with entire conversation + validation prompt
+    // Get current terminal output for validation context
+    const terminalOutput = workbenchStore.get().terminalOutput;
+    
+    // Build validation history with entire conversation + validation prompt + terminal context
+    const validationPromptWithTerminal = terminalOutput.trim() 
+      ? `${VALIDATION_PROMPT}\n\n**IMPORTANT TERMINAL CONTEXT:**\nBelow is the terminal output captured so far. Note that some commands from the conversation history might still be processing or pending execution:\n\n\`\`\`terminal\n${terminalOutput}\n\`\`\`\n\nIf you identify any issues in the terminal output (errors, missing dependencies, compilation failures), provide complete file modifications followed by terminal commands that should be executed AFTER all pending commands complete.`
+      : VALIDATION_PROMPT;
+    
     const validationHistory = [
       ...conversationHistory,
-      { role: 'user', content: VALIDATION_PROMPT }
+      { role: 'user', content: validationPromptWithTerminal }
     ];
     
     // Stream validation response
@@ -306,17 +461,28 @@ export async function streamAgentResponse(prompt: string, callbacks: GeminiParse
   (callbacks as any)._parser = parser;
 
   try {
+    const isValidationCall = prompt === VALIDATION_PROMPT;
+    const requestBody = {
+      message: prompt,
+      conversation_history: conversationHistory,
+      stream: true,
+    };
+
+    // Add thinking configuration only for validation calls with Gemini 2.5 Pro
+    if (isValidationCall) {
+      requestBody.thinking_config = {
+        thinking_budget: 128  // Minimum for Gemini 2.5 Pro
+      };
+      requestBody.model_override = "gemini-2.5-pro"; // Ensure we're using Pro
+    }
+
     const response = await fetch(`${apiBaseUrl}/api/v1/chat`, {
       method: 'POST',
       headers: { 
         'Content-Type': 'application/json',
         'Accept': 'text/event-stream',
       },
-      body: JSON.stringify({
-        message: prompt,
-        conversation_history: conversationHistory,
-        stream: true,
-      }),
+      body: JSON.stringify(requestBody),
     });
 
     if (!response.ok) {

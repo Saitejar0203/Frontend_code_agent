@@ -15,6 +15,7 @@ import {
 import { AssistantMessage } from '../chat/AssistantMessage';
 import { UserMessage } from '../chat/UserMessage';
 import { ThinkingAnimation } from '../chat/ThinkingAnimation';
+import { stopQueuedMessages, hasQueuedMessages } from '@/services/codeAgentService';
 
 interface CodeChatInterfaceProps {
   onSendMessage?: (message: string) => void;
@@ -40,8 +41,8 @@ const CodeChatInterface: React.FC<CodeChatInterfaceProps> = ({
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     console.log('🎯 CodeChatInterface handleSubmit called with input:', input);
-    if (!input.trim() || isGenerating) {
-      console.log('❌ Input validation failed or already generating');
+    if (!input.trim() || isGenerating || hasQueuedMessages()) {
+      console.log('❌ Input validation failed, already generating, or has queued messages');
       return;
     }
     
@@ -59,8 +60,17 @@ const CodeChatInterface: React.FC<CodeChatInterfaceProps> = ({
   };
 
   const handleStop = () => {
+    console.log('🛑 Stop button clicked');
+    
+    // Stop any queued messages
+    if (hasQueuedMessages()) {
+      console.log('🛑 Stopping queued messages');
+      stopQueuedMessages();
+    }
+    
+    // Stop current generation
     setGenerating(false);
-    // TODO: Implement actual stop functionality
+    console.log('✅ Stop action completed');
   };
 
   const handleClear = () => {
@@ -145,10 +155,10 @@ const CodeChatInterface: React.FC<CodeChatInterfaceProps> = ({
             value={input}
             onChange={(e) => setInput(e.target.value)}
             placeholder="Ask me to create a project, fix code, or help with development..."
-            disabled={isGenerating}
+            disabled={isGenerating || hasQueuedMessages()}
             className="flex-1 px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 dark:bg-gray-800 dark:text-white disabled:opacity-50"
           />
-          {isGenerating ? (
+          {(isGenerating || hasQueuedMessages()) ? (
             <button
               type="button"
               onClick={handleStop}

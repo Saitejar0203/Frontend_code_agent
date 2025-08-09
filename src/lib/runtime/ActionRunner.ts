@@ -12,6 +12,7 @@ import {
 } from '@/lib/stores/workbenchStore';
 import { addFileModification } from '@/lib/stores/chatStore';
 import { FileSystemTree, WebContainer } from '@webcontainer/api';
+import { getPreviewManager } from '@/lib/preview/PreviewManager';
 
 import { createScopedLogger } from './logger';
 
@@ -408,6 +409,12 @@ class ActionRunner {
       
       // Reset the file tree in the workbench store
       setFileTree([]);
+      
+      // Clear preview manager state
+      const previewManager = getPreviewManager();
+      if (previewManager) {
+        previewManager.clearAll();
+      }
       
       // Reset all state
       this.resetState();

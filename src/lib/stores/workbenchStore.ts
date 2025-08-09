@@ -358,7 +358,7 @@ export function clearArtifacts() {
 
 /**
  * Reset workbench state for new conversation
- * Clears artifacts, running commands, and resets UI state
+ * Clears artifacts, running commands, previews, terminal output, and resets UI state
  */
 export function resetWorkbenchForNewConversation() {
   // Clear artifacts
@@ -367,11 +367,17 @@ export function resetWorkbenchForNewConversation() {
   // Clear running commands
   clearRunningCommands();
   
+  // Clear previews from previous conversation
+  clearPreviews();
+  
+  // Clear terminal output
+  clearTerminalOutput();
+  
   // Reset active tab to files
   setActiveTab('files');
   
   // Clear any error states
-  // Note: We keep the file tree and terminal output for continuity
+  // Note: We keep the file tree for continuity
 }
 
 // =============================================================================

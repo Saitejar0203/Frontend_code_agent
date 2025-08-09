@@ -3,6 +3,7 @@ import { WebContainer } from '@webcontainer/api';
 import { PreviewManager } from '../../lib/preview/PreviewManager';
 import { ActionRunner } from '../../lib/runtime/ActionRunner';
 import { workbenchStore } from '../../lib/stores/workbenchStore';
+import { messageQueue } from '../../services/codeAgentService';
 
 // Global singleton for WebContainer
 let globalWebContainer: WebContainer | null = null;
@@ -93,6 +94,12 @@ export function WebContainerProvider({ children }: WebContainerProviderProps) {
         setIsBooting(false);
         setError(null);
         
+        // Notify message queue that WebContainer is ready
+        if (globalActionRunner) {
+          console.log('[WebContainer] Notifying message queue that WebContainer is ready');
+          messageQueue.notifyWebContainerReady(container, globalActionRunner);
+        }
+        
       } catch (err) {
         if (!mounted) return;
         
@@ -111,6 +118,12 @@ export function WebContainerProvider({ children }: WebContainerProviderProps) {
       setPreviewManager(globalPreviewManager);
       setActionRunner(globalActionRunner);
       setIsBooting(false);
+      
+      // Notify message queue that WebContainer is ready (if not already notified)
+      if (globalActionRunner) {
+        console.log('[WebContainer] WebContainer already ready, notifying message queue');
+        messageQueue.notifyWebContainerReady(globalWebContainer, globalActionRunner);
+      }
     } else if (globalWebContainerPromise) {
       // WebContainer is booting, wait for it
       globalWebContainerPromise.then(container => {
@@ -119,6 +132,12 @@ export function WebContainerProvider({ children }: WebContainerProviderProps) {
           setPreviewManager(globalPreviewManager);
           setActionRunner(globalActionRunner);
           setIsBooting(false);
+          
+          // Notify message queue that WebContainer is ready
+          if (globalActionRunner) {
+            console.log('[WebContainer] WebContainer promise resolved, notifying message queue');
+            messageQueue.notifyWebContainerReady(container, globalActionRunner);
+          }
         }
       }).catch(err => {
         if (mounted) {

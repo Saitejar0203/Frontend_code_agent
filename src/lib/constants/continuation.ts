@@ -14,15 +14,11 @@ export const CONTINUE_PROMPT = `Your previous response was truncated due to a to
  
  1.  **If Inside an Action Tag:** If the truncation occurred *inside* a \`<boltAction>...\</boltAction>\` block, you **MUST** discard the partial action and restart by re-emitting the **entire, most recent \`<boltAction>\` tag** from its beginning. Do not re-emit the parent \`<boltArtifact>\` or any actions that were already completed. 
  
-     * *Example:* If your last output was \`...<boltAction type="file">const x = 1;\` (and was cut off), you must restart with the full \`<boltAction type="file" ...>...\</boltAction>\`. 
- 
  2.  **If Generating Plain Text:** If the truncation occurred while generating plain text (text for the chat UI, *outside* of any action tags), you **MUST** continue generating from the exact point of interruption. 
  
-     * *Example:* If your last output was \`Here is the first file:\`, you should continue with whatever came next, likely a \`<boltAction>\` tag. 
- 
- **CRITICAL FORMATTING RULES:** 
- - **DO NOT** repeat any content that was successfully and completely sent before the point of interruption. 
+ **CRITICAL FORMATTING RULES:** - **DO NOT** repeat any content that was successfully and completely sent before the point of interruption. 
  - **DO NOT** add any conversational text, apologies, or explanations (e.g., "Okay, restarting the action..."). Your response must be a direct and seamless continuation. 
+ - **You MUST NOT create or modify a \`plan.md\` file. Simply continue the previous, unfinished response.** 
  `;
 
 /**
@@ -61,19 +57,22 @@ export function isNullResponse(content: string | null | undefined): boolean {
  * Maximum number of validation iterations allowed
  * This prevents infinite validation loops
  */
-export const MAX_VALIDATION_ITERATIONS = 3;
+export const MAX_VALIDATION_ITERATIONS = 1;
 
 /**
  * Validation prompt to send when checking code quality and completeness
  */
-export const VALIDATION_PROMPT = `Review the entire conversation between human and AI, AI is responding to human request ensure that the code and mdofications given by AI satisfy the human code requests for generation and changes. Check for:
-- Code completeness and correctness
-- User requirement satisfaction
-- Potential errors or improvements
-- Missing functionality or edge cases
+export const VALIDATION_PROMPT = `Review the entire conversation between human and AI, ensuring that the code and modifications given by AI satisfy the human code requests for generation and changes. Check for: 
+- Code completeness and correctness 
+- User requirement satisfaction 
+- Potential errors or runtime issues
+- Missing required functionality 
+- Dependencies and build issues
 
-If the code is satisfactory and meets all requirements, respond with <validation_complete>.
-If improvements are needed, provide ONLY the necessary <boltAction> tags with complete file modifications. Do NOT include explanatory text`;
+IMPORTANT: If terminal output is provided below, analyze it for any errors, warnings, or issues. Note that some commands from the conversation history might still be processing or pending execution.
+
+If the code is satisfactory and meets all requirements, respond with <validation_complete>. 
+If code corrections are needed, provide ONLY the necessary <boltAction> tags with complete file modifications followed by terminal commands that should be executed AFTER all pending commands complete. Do NOT include explanatory text. **You MUST NOT create a \`plan.md\` file during this validation step.**`;
 
 /**
  * Tags that indicate validation is complete and approved
