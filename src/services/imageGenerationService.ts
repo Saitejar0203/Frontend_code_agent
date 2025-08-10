@@ -118,45 +118,40 @@ class ImageGenerationService {
 
     logger.info(`[ImageGenerationService] Mounting ${results.length} images to WebContainer`);
 
-    // Prepare files for mounting
-    const filesToMount: Record<string, string> = {};
-    
-    for (const result of results) {
-      try {
-        // Convert base64 to binary data
-        const binaryData = atob(result.image_base64!);
-        const bytes = new Uint8Array(binaryData.length);
-        for (let i = 0; i < binaryData.length; i++) {
-          bytes[i] = binaryData.charCodeAt(i);
-        }
-        
-        // Store as binary string for WebContainer
-        filesToMount[result.path] = String.fromCharCode(...bytes);
-        
-        logger.info(`[ImageGenerationService] Prepared image for mounting: ${result.path}`);
-      } catch (error) {
-        logger.error(`[ImageGenerationService] Error preparing image ${result.path}:`, error);
-      }
-    }
-
-    if (Object.keys(filesToMount).length === 0) {
-      logger.warn('[ImageGenerationService] No images prepared for mounting');
-      return;
-    }
-
     try {
-      // Mount files to WebContainer
-      await webcontainerInstance.mount(filesToMount);
-      logger.info(`[ImageGenerationService] Successfully mounted ${Object.keys(filesToMount).length} images`);
-
-      // Add file modifications to chat store for UI updates
-      for (const path of Object.keys(filesToMount)) {
-        addFileModification({
-          path,
-          type: 'create',
-          content: `Generated image: ${path}`
-        });
+      for (const result of results) {
+        try {
+          // Convert base64 to binary data
+          const binaryData = atob(result.image_base64!);
+          const bytes = new Uint8Array(binaryData.length);
+          for (let i = 0; i < binaryData.length; i++) {
+            bytes[i] = binaryData.charCodeAt(i);
+          }
+          
+          // Ensure the directory exists before writing the file
+          const directoryPath = result.path.substring(0, result.path.lastIndexOf('/'));
+          if (directoryPath) {
+            await webcontainerInstance.fs.mkdir(directoryPath, { recursive: true });
+          }
+          
+          // Write file directly using fs.writeFile with Uint8Array
+          await webcontainerInstance.fs.writeFile(result.path, bytes);
+          
+          logger.info(`[ImageGenerationService] Successfully wrote image: ${result.path}`);
+          
+          // Add file modification to chat store for UI updates
+          addFileModification({
+            path: result.path,
+            type: 'create',
+            content: `Generated image: ${result.path}`
+          });
+          
+        } catch (error) {
+          logger.error(`[ImageGenerationService] Error writing image ${result.path}:`, error);
+        }
       }
+
+      logger.info(`[ImageGenerationService] Completed mounting images to WebContainer`);
 
     } catch (error) {
       logger.error('[ImageGenerationService] Error mounting images to WebContainer:', error);
