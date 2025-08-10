@@ -5,6 +5,9 @@ const ARTIFACT_TAG_OPEN = '<boltArtifact';
 const ARTIFACT_TAG_CLOSE = '</boltArtifact>';
 const ARTIFACT_ACTION_TAG_OPEN = '<boltAction';
 const ARTIFACT_ACTION_TAG_CLOSE = '</boltAction>';
+const IMGS2GEN_TAG_OPEN = '<imgs2gen>';
+const IMGS2GEN_TAG_CLOSE = '</imgs2gen>';
+const IMG_PROMPT_TAG_REGEX = /<img_prompt\s+local_path=["']([^"']+)["']\s+description=["']([^"']+)["']\s*\/?>/g;
 
 const logger = createScopedLogger('StreamingMessageParser');
 
@@ -26,6 +29,11 @@ export interface ActionCallbackData {
 export type ArtifactCallback = (data: ArtifactCallbackData) => void;
 export type ActionCallback = (data: ActionCallbackData) => void;
 
+export interface ImageGenerationRequest {
+  localPath: string;
+  description: string;
+}
+
 export interface ParserCallbacks {
   onArtifactOpen?: ArtifactCallback;
   onArtifactClose?: ArtifactCallback;
@@ -33,6 +41,7 @@ export interface ParserCallbacks {
   onActionClose?: ActionCallback;
   onActionContentUpdate?: ActionCallback; // New callback for immediate triggering
   onText?: (text: string) => void;
+  onImageGenerationRequest?: (requests: ImageGenerationRequest[]) => void;
 }
 
 interface ElementFactoryProps {
@@ -50,9 +59,11 @@ interface MessageState {
   position: number;
   insideArtifact: boolean;
   insideAction: boolean;
+  insideImgs2Gen: boolean;
   currentArtifact?: BoltArtifactData;
   currentAction: { content: string; type?: string; filePath?: string };
   tagBuffer: string;
+  imgs2GenBuffer: string;
   actionId: number;
   lastContentLength: number; // Track content length for immediate triggering
   contentUpdateThreshold: number; // Minimum content before triggering
@@ -98,8 +109,10 @@ export class StreamingMessageParser {
         position: 0,
         insideArtifact: false,
         insideAction: false,
+        insideImgs2Gen: false,
         currentAction: { content: '' },
         tagBuffer: '',
+        imgs2GenBuffer: '',
         actionId: 0,
         lastContentLength: 0,
         contentUpdateThreshold: 50, // Trigger after 50 characters
@@ -115,39 +128,44 @@ export class StreamingMessageParser {
     for (let i = 0; i < chunk.length; i++) {
       const char = chunk[i];
 
+      if (state.insideImgs2Gen) {
+        // If we are inside an image block, buffer EVERYTHING until the closing tag.
+        state.imgs2GenBuffer += char;
+        // Check if the buffer now contains the closing tag.
+        const bufferEnd = state.imgs2GenBuffer.slice(-IMGS2GEN_TAG_CLOSE.length);
+        if (bufferEnd === IMGS2GEN_TAG_CLOSE) {
+          // If it does, process the closing tag and clear the buffer.
+          this.processTag(messageId, state, IMGS2GEN_TAG_CLOSE);
+        }
+        continue; // Skip all other logic while in this mode.
+      }
+
+      // The original logic for finding '<', '>', and buffering tags.
       if (char === '<' && state.tagBuffer.length === 0) {
-        // A new tag is starting. First, emit any plain text we've collected.
         if (currentText) {
           if (state.insideAction) {
             state.currentAction.content += currentText;
-            // Check for immediate triggering when content is added
             this.checkForImmediateActionTrigger(messageId, state);
           } else {
             this.callbacks.onText?.(currentText);
           }
           currentText = '';
         }
-        // Start buffering the new tag
         state.tagBuffer = '<';
       } else if (char === '>' && state.tagBuffer.length > 0) {
-        // End of a tag
         state.tagBuffer += '>';
         this.processTag(messageId, state, state.tagBuffer);
-        state.tagBuffer = ''; // Reset buffer after processing
+        state.tagBuffer = '';
       } else if (state.tagBuffer.length > 0) {
-        // We are inside a tag, keep buffering
         state.tagBuffer += char;
       } else {
-        // Not in a tag, accumulate as plain text
         currentText += char;
       }
     }
 
-    // After the loop, handle any remaining plain text
     if (currentText) {
       if (state.insideAction) {
         state.currentAction.content += currentText;
-        // Check if we should trigger immediate action execution
         this.checkForImmediateActionTrigger(messageId, state);
       } else {
         this.callbacks.onText?.(currentText);
@@ -157,6 +175,43 @@ export class StreamingMessageParser {
 
   // Add this new method inside the StreamingMessageParser class
   private processTag(messageId: string, state: MessageState, tag: string) {
+    if (tag === IMGS2GEN_TAG_OPEN) {
+      console.log('🖼️ Entering image generation block.');
+      state.insideImgs2Gen = true;
+      state.imgs2GenBuffer = ''; // Reset buffer
+      return; // Don't process further
+    }
+    
+    if (tag === IMGS2GEN_TAG_CLOSE && state.insideImgs2Gen) {
+      console.log('🖼️ Closing image generation block. Parsing prompts...');
+      const imageRequests: ImageGenerationRequest[] = [];
+      let match;
+      
+      // Remove the closing tag itself from the buffer before parsing
+      const contentToParse = state.imgs2GenBuffer.slice(0, -IMGS2GEN_TAG_CLOSE.length);
+      
+      // Reset regex lastIndex to ensure we start from the beginning
+      IMG_PROMPT_TAG_REGEX.lastIndex = 0;
+      
+      while ((match = IMG_PROMPT_TAG_REGEX.exec(contentToParse)) !== null) {
+        imageRequests.push({ localPath: match[1], description: match[2] });
+      }
+
+      if (imageRequests.length > 0) {
+        console.log(`🖼️ Extracted image requests:`, imageRequests);
+        this.callbacks.onImageGenerationRequest?.(imageRequests);
+      } else {
+        console.warn('🖼️ Image generation block was empty or malformed.', `Buffer content: ${contentToParse}`);
+      }
+
+      state.insideImgs2Gen = false;
+      state.imgs2GenBuffer = '';
+      return;
+    }
+    
+    // If we're inside an image block, don't process other tags.
+    if (state.insideImgs2Gen) return;
+
     if (tag.startsWith(ARTIFACT_ACTION_TAG_OPEN)) {
       state.insideAction = true;
       const action = this.parseActionTag(tag, 0, tag.length - 1);
@@ -203,6 +258,8 @@ export class StreamingMessageParser {
   reset() {
     this.messages.clear();
   }
+
+
 
   /**
    * Check if action content has reached threshold for immediate triggering
