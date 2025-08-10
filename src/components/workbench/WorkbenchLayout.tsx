@@ -11,7 +11,7 @@ import { Badge } from '@/components/ui/badge';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { useStore } from '@nanostores/react';
 import { workbenchStore, setActiveTab } from '@/lib/stores/workbenchStore';
-import { useWebContainer } from '../webcontainer/WebContainerProvider';
+import { useWebContainer } from '@/components/WebContainer/WebContainerProvider';
 import { sendChatMessage } from '@/services/codeAgentService';
 import { useTerminalIntegration } from '@/hooks/useTerminalIntegration';
 

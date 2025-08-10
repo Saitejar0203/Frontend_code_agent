@@ -6,6 +6,7 @@ import { chatStore } from '@/lib/stores/chatStore';
 import { addArtifact, addArtifactAndPrepareExecution, addActionToArtifact, addOrUpdateFileFromAction, resetWorkbenchForNewConversation } from '@/lib/stores/workbenchStore';
 import { WebContainer } from '@webcontainer/api';
 import { MAX_RESPONSE_SEGMENTS, CONTINUE_PROMPT, isTruncationFinishReason, isNullResponse, MAX_VALIDATION_ITERATIONS, VALIDATION_PROMPT, isValidationApproved } from '@/lib/constants/continuation';
+import { imageGenerationService } from './imageGenerationService';
 
 // Message queue for handling requests when WebContainer is not ready
 interface QueuedMessage {
@@ -255,6 +256,27 @@ async function sendChatMessageInternal(userInput: string, webcontainer: WebConta
         console.log(`📝 Action content update: ${action.type}${artifactId ? ` in artifact ${artifactId}` : ''} (${action.content.length} chars)`);
         // Skip immediate execution to avoid multiple writes to the same file
         // Actions will be executed only when complete via onActionClose
+      },
+      onImageGenerationRequest: async (requests) => {
+        console.log(`🖼️ Image generation request received: ${requests.length} images`);
+        try {
+          if (!webcontainer) {
+            throw new Error('WebContainer not available for image generation');
+          }
+          await imageGenerationService.generateAndMountImages(requests, webcontainer);
+          console.log(`✅ Successfully processed ${requests.length} image generation requests`);
+        } catch (error) {
+          console.error('❌ Error processing image generation requests:', error);
+          // Add error message to chat
+          const errorMessage: Message = {
+            id: `${Date.now()}-img-error`,
+            content: `❌ Failed to generate images: ${error instanceof Error ? error.message : 'Unknown error'}`,
+            sender: 'agent',
+            timestamp: new Date(),
+            type: 'error'
+          };
+          addMessage(errorMessage);
+        }
       }
     };
     

@@ -1,5 +1,5 @@
 import { useEffect, useRef } from 'react';
-import { useWebContainer } from '../components/webcontainer/WebContainerProvider';
+import { useWebContainer } from '@/components/WebContainer/WebContainerProvider';
 import { workbenchStore } from '../lib/stores/workbenchStore';
 import { useStore } from '@nanostores/react';
 

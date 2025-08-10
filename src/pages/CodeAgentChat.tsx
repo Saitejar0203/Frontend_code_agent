@@ -7,7 +7,7 @@ import { useAuth } from '@/contexts/AuthContext';
 import { AuthGuard } from '../components/auth';
 import useMobileDetection from '../components/chat/mobile/useMobileDetection';
 import { WorkbenchLayout } from '../components/workbench/WorkbenchLayout';
-import { WebContainerProvider, useWebContainer } from '../components/webcontainer/WebContainerProvider';
+import { WebContainerProvider, useWebContainer } from '@/components/WebContainer/WebContainerProvider';
 
 import { useStore } from '@nanostores/react';
 import { chatStore, startNewChat, setGenerating, type Message } from '@/lib/stores/chatStore';

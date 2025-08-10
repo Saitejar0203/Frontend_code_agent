@@ -5,9 +5,8 @@ const ARTIFACT_TAG_OPEN = '<boltArtifact';
 const ARTIFACT_TAG_CLOSE = '</boltArtifact>';
 const ARTIFACT_ACTION_TAG_OPEN = '<boltAction';
 const ARTIFACT_ACTION_TAG_CLOSE = '</boltAction>';
-const IMGS2GEN_TAG_OPEN = '<imgs2gen>';
-const IMGS2GEN_TAG_CLOSE = '</imgs2gen>';
-const IMG_PROMPT_TAG_REGEX = /<img_prompt\s+local_path=["']([^"']+)["']\s+description=["']([^"']+)["']\s*\/?>/g;
+const BOLT_IMAGE_TASK_TAG_OPEN = '<boltImageTask>';
+const BOLT_IMAGE_TASK_TAG_CLOSE = '</boltImageTask>';
 
 const logger = createScopedLogger('StreamingMessageParser');
 
@@ -59,11 +58,11 @@ interface MessageState {
   position: number;
   insideArtifact: boolean;
   insideAction: boolean;
-  insideImgs2Gen: boolean;
+  insideBoltImageTask: boolean;
   currentArtifact?: BoltArtifactData;
   currentAction: { content: string; type?: string; filePath?: string };
   tagBuffer: string;
-  imgs2GenBuffer: string;
+  boltImageTaskBuffer: string;
   actionId: number;
   lastContentLength: number; // Track content length for immediate triggering
   contentUpdateThreshold: number; // Minimum content before triggering
@@ -109,10 +108,10 @@ export class StreamingMessageParser {
         position: 0,
         insideArtifact: false,
         insideAction: false,
-        insideImgs2Gen: false,
+        insideBoltImageTask: false,
         currentAction: { content: '' },
         tagBuffer: '',
-        imgs2GenBuffer: '',
+        boltImageTaskBuffer: '',
         actionId: 0,
         lastContentLength: 0,
         contentUpdateThreshold: 50, // Trigger after 50 characters
@@ -128,14 +127,14 @@ export class StreamingMessageParser {
     for (let i = 0; i < chunk.length; i++) {
       const char = chunk[i];
 
-      if (state.insideImgs2Gen) {
+      if (state.insideBoltImageTask) {
         // If we are inside an image block, buffer EVERYTHING until the closing tag.
-        state.imgs2GenBuffer += char;
+        state.boltImageTaskBuffer += char;
         // Check if the buffer now contains the closing tag.
-        const bufferEnd = state.imgs2GenBuffer.slice(-IMGS2GEN_TAG_CLOSE.length);
-        if (bufferEnd === IMGS2GEN_TAG_CLOSE) {
+        const bufferEnd = state.boltImageTaskBuffer.slice(-BOLT_IMAGE_TASK_TAG_CLOSE.length);
+        if (bufferEnd === BOLT_IMAGE_TASK_TAG_CLOSE) {
           // If it does, process the closing tag and clear the buffer.
-          this.processTag(messageId, state, IMGS2GEN_TAG_CLOSE);
+          this.processTag(messageId, state, BOLT_IMAGE_TASK_TAG_CLOSE);
         }
         continue; // Skip all other logic while in this mode.
       }
@@ -175,42 +174,60 @@ export class StreamingMessageParser {
 
   // Add this new method inside the StreamingMessageParser class
   private processTag(messageId: string, state: MessageState, tag: string) {
-    if (tag === IMGS2GEN_TAG_OPEN) {
+    if (tag === BOLT_IMAGE_TASK_TAG_OPEN) {
       console.log('🖼️ Entering image generation block.');
-      state.insideImgs2Gen = true;
-      state.imgs2GenBuffer = ''; // Reset buffer
+      state.insideBoltImageTask = true;
+      state.boltImageTaskBuffer = ''; // Reset buffer
       return; // Don't process further
     }
     
-    if (tag === IMGS2GEN_TAG_CLOSE && state.insideImgs2Gen) {
-      console.log('🖼️ Closing image generation block. Parsing prompts...');
-      const imageRequests: ImageGenerationRequest[] = [];
-      let match;
+    if (tag === BOLT_IMAGE_TASK_TAG_CLOSE && state.insideBoltImageTask) {
+      console.log('🖼️ Closing image generation block. Parsing JSON...');
       
       // Remove the closing tag itself from the buffer before parsing
-      const contentToParse = state.imgs2GenBuffer.slice(0, -IMGS2GEN_TAG_CLOSE.length);
+      const contentToParse = state.boltImageTaskBuffer.slice(0, -BOLT_IMAGE_TASK_TAG_CLOSE.length);
       
-      // Reset regex lastIndex to ensure we start from the beginning
-      IMG_PROMPT_TAG_REGEX.lastIndex = 0;
-      
-      while ((match = IMG_PROMPT_TAG_REGEX.exec(contentToParse)) !== null) {
-        imageRequests.push({ localPath: match[1], description: match[2] });
+      try {
+        // Clean markdown code fences before parsing JSON
+        let cleanedContent = contentToParse.trim();
+        
+        // Remove markdown code block syntax
+        // Remove opening code block (```json, ```)
+        cleanedContent = cleanedContent.replace(/^```\w*\s*\n?/gm, '');
+        
+        // Remove closing code block
+        cleanedContent = cleanedContent.replace(/\n?```\s*$/gm, '');
+        
+        // Remove any remaining backticks at start/end
+        cleanedContent = cleanedContent.replace(/^`+|`+$/g, '');
+        
+        const jsonContent = JSON.parse(cleanedContent.trim());
+        
+        if (jsonContent.images && Array.isArray(jsonContent.images)) {
+          const imageRequests: ImageGenerationRequest[] = jsonContent.images
+            .filter((img: any) => img.local_path && img.description)
+            .map((img: any) => ({
+              localPath: img.local_path,
+              description: img.description,
+            }));
+          
+          if (imageRequests.length > 0) {
+            console.log(`🖼️ Extracted image requests:`, imageRequests);
+            this.callbacks.onImageGenerationRequest?.(imageRequests);
+          }
+        }
+      } catch (error) {
+        console.error('🖼️ Failed to parse boltImageTask JSON:', error);
+        console.warn('🖼️ Buffer content:', contentToParse);
       }
 
-      if (imageRequests.length > 0) {
-        console.log(`🖼️ Extracted image requests:`, imageRequests);
-        this.callbacks.onImageGenerationRequest?.(imageRequests);
-      } else {
-        console.warn('🖼️ Image generation block was empty or malformed.', `Buffer content: ${contentToParse}`);
-      }
-
-      state.insideImgs2Gen = false;
-      state.imgs2GenBuffer = '';
+      state.insideBoltImageTask = false;
+      state.boltImageTaskBuffer = '';
       return;
     }
     
     // If we're inside an image block, don't process other tags.
-    if (state.insideImgs2Gen) return;
+    if (state.insideBoltImageTask) return;
 
     if (tag.startsWith(ARTIFACT_ACTION_TAG_OPEN)) {
       state.insideAction = true;

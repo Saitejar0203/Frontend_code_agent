@@ -2,7 +2,7 @@ import { Terminal } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
 import '@xterm/xterm/css/xterm.css';
 import React, { useEffect, useRef, useState, useCallback } from 'react';
-import { webcontainer } from '../../lib/webcontainer';
+import { useWebContainer } from './WebContainerProvider';
 // --- Start of FIX ---
 import { useStore } from '@nanostores/react';
 import { setWebContainerReady, workbenchStore } from '../../lib/stores/workbenchStore';
@@ -30,6 +30,7 @@ const WebContainerComponent: React.FC<WebContainerComponentProps> = ({
   className,
   onPreviewUrlChange
 }) => {
+  const { webcontainer } = useWebContainer();
   const terminalRef = useRef<HTMLDivElement>(null);
   const terminalInstanceRef = useRef<Terminal | null>(null);
   const fitAddonRef = useRef<FitAddon | null>(null);
@@ -101,7 +102,10 @@ const WebContainerComponent: React.FC<WebContainerComponentProps> = ({
       appendTerminalOutput('🚀 Initializing WebContainer...\n');
       
       // Wait for WebContainer to be ready
-      const container = await webcontainer;
+      if (!webcontainer) {
+        throw new Error('WebContainer not available');
+      }
+      const container = webcontainer;
       
       // Set up server-ready listener
       container.on('server-ready', (port, url) => {
@@ -129,7 +133,10 @@ const WebContainerComponent: React.FC<WebContainerComponentProps> = ({
     if (!isInitialized || files.length === 0) return;
     
     try {
-      const container = await webcontainer;
+      if (!webcontainer) {
+        throw new Error('WebContainer not available');
+      }
+      const container = webcontainer;
       
       // Convert files to FileSystemTree format
       const fileSystemTree: any = {};

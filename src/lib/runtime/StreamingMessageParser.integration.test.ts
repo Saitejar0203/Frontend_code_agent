@@ -96,6 +96,7 @@ describe('StreamingMessageParser Integration Tests', () => {
       onArtifactClose: vi.fn(),
       onActionOpen: vi.fn(),
       onActionClose: vi.fn(),
+      onImageGenerationRequest: vi.fn(),
     };
     vi.clearAllMocks();
   });
@@ -360,6 +361,90 @@ describe('StreamingMessageParser Integration Tests', () => {
           type: 'file',
           filePath: 'src/components/"MyComponent".tsx'
         }));
+      });
+    });
+
+    describe('Image Generation Responses', () => {
+      it('should handle JSON-based image generation requests', async () => {
+        const chunks = [
+          'I\'ll create some images for your project.\n\n',
+          '<boltImageTask>\n',
+          '{\n',
+          '  "images": [\n',
+          '    {\n',
+          '      "path": "/public/logo.png",\n',
+          '      "description": "A modern, minimalist logo with blue and white colors"\n',
+          '    },\n',
+          '    {\n',
+          '      "path": "/public/hero-bg.jpg",\n',
+          '      "description": "A stunning landscape photograph at sunset"\n',
+          '    }\n',
+          '  ]\n',
+          '}\n',
+          '</boltImageTask>\n\n',
+          'Images will be generated shortly!'
+        ];
+        
+        await simulateBackendResponse(chunks, callbacks);
+        
+        expect(callbacks.onText).toHaveBeenCalledWith('I\'ll create some images for your project.');
+        
+        expect(callbacks.onImageGenerationRequest).toHaveBeenCalledWith([
+          {
+            localPath: '/public/logo.png',
+            description: 'A modern, minimalist logo with blue and white colors'
+          },
+          {
+            localPath: '/public/hero-bg.jpg',
+            description: 'A stunning landscape photograph at sunset'
+          }
+        ]);
+        
+        expect(callbacks.onText).toHaveBeenCalledWith('Images will be generated shortly!');
+      });
+
+      it('should handle image generation with quotes in descriptions', async () => {
+        const chunks = [
+          '<boltImageTask>\n',
+          '{\n',
+          '  "images": [\n',
+          '    {\n',
+          '      "path": "/public/quote-test.jpg",\n',
+          '      "description": "A photo with \\"quotes\\" and \'apostrophes\' in the description"\n',
+          '    }\n',
+          '  ]\n',
+          '}\n',
+          '</boltImageTask>'
+        ];
+        
+        await simulateBackendResponse(chunks, callbacks);
+        
+        expect(callbacks.onImageGenerationRequest).toHaveBeenCalledWith([
+          {
+            localPath: '/public/quote-test.jpg',
+            description: 'A photo with "quotes" and \'apostrophes\' in the description'
+          }
+        ]);
+      });
+
+      it('should handle malformed JSON gracefully', async () => {
+        const chunks = [
+          '<boltImageTask>\n',
+          '{\n',
+          '  "images": [\n',
+          '    {\n',
+          '      "path": "/public/test.jpg"\n',
+          '      // missing comma and description\n',
+          '    }\n',
+          '  ]\n',
+          '}\n',
+          '</boltImageTask>'
+        ];
+        
+        await simulateBackendResponse(chunks, callbacks);
+        
+        // Should not call onImageGenerationRequest for malformed JSON
+        expect(callbacks.onImageGenerationRequest).not.toHaveBeenCalled();
       });
     });
   });

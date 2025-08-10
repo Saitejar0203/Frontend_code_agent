@@ -3,7 +3,7 @@ import { useStore } from '@nanostores/react';
 import { workbenchStore, selectArtifact, removeArtifact } from '../lib/stores/workbenchStore';
 import type { ArtifactState } from '../lib/stores/workbenchStore';
 import type { BoltAction } from '../lib/runtime/types';
-import { useWebContainer } from './WebContainer/WebContainerProvider';
+import { useWebContainer } from '@/components/WebContainer/WebContainerProvider';
 import { 
   FileText, 
   Terminal, 
