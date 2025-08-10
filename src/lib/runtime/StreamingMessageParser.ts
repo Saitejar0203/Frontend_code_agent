@@ -93,10 +93,18 @@ export class StreamingMessageParser {
   }
 
   /**
-   * Check if the parser is currently inside any XML tag (artifact or action)
+   * Check if the parser is currently inside a bolt image task for a given message
+   */
+  public isInsideBoltImageTask(messageId: string): boolean {
+    const state = this.messages.get(messageId);
+    return state?.insideBoltImageTask || false;
+  }
+
+  /**
+   * Check if the parser is currently inside any XML tag (artifact, action, or image task)
    */
   public isInsideXmlTag(messageId: string): boolean {
-    return this.isInsideArtifact(messageId) || this.isInsideAction(messageId);
+    return this.isInsideArtifact(messageId) || this.isInsideAction(messageId) || this.isInsideBoltImageTask(messageId);
   }
 
   parse(messageId: string, chunk: string): void {
