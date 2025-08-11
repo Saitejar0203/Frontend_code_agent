@@ -859,6 +859,14 @@ class ActionRunner {
     this.actions.clear();
   }
 
+  /**
+   * Public method to refresh the file tree from WebContainer
+   * This can be called by external services like ImageGenerationService
+   */
+  public async refreshFileTree(): Promise<void> {
+    await this.updateFileTree();
+  }
+
   private convertToFileNodes(tree: FileSystemTree, basePath = ''): FileNode[] {
     const nodes: FileNode[] = [];
     

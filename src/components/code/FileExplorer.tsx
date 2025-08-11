@@ -14,28 +14,32 @@ import {
   Copy,
   Scissors,
   Trash2,
+  Download,
   Edit3,
   Eye,
   EyeOff,
-  Download
+  Archive
 } from 'lucide-react';
-import { workbenchStore, toggleFolder, setSelectedFile, type FileNode } from '@/lib/stores/workbenchStore';
+import { workbenchStore, setSelectedFile, toggleFolder, type FileNode } from '@/lib/stores/workbenchStore';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
-import {
-  ContextMenu,
-  ContextMenuContent,
-  ContextMenuItem,
-  ContextMenuSeparator,
-  ContextMenuTrigger,
-} from '@/components/ui/context-menu';
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuTrigger,
-} from '@/components/ui/dropdown-menu';
 import { Badge } from '@/components/ui/badge';
+import { 
+  ContextMenu, 
+  ContextMenuContent, 
+  ContextMenuItem, 
+  ContextMenuSeparator, 
+  ContextMenuTrigger, 
+} from '@/components/ui/context-menu'; 
+import { 
+  DropdownMenu, 
+  DropdownMenuContent, 
+  DropdownMenuItem, 
+  DropdownMenuTrigger, 
+} from '@/components/ui/dropdown-menu'; 
+import { getDownloadService } from '@/services/downloadService'; 
+import { useWebContainer } from '@/components/WebContainer/WebContainerProvider'; 
+import { ActionRunner } from '@/lib/runtime/ActionRunner';
 
 interface FileExplorerProps {
   className?: string;
@@ -49,7 +53,9 @@ const FileExplorer: React.FC<FileExplorerProps> = ({ className, onFileSelect }) 
   const [draggedItem, setDraggedItem] = useState<FileNode | null>(null);
   const [dragOverItem, setDragOverItem] = useState<string | null>(null);
   const [contextMenuNode, setContextMenuNode] = useState<FileNode | null>(null);
+  const [isDownloading, setIsDownloading] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const { webcontainer, actionRunner } = useWebContainer();
 
   // Get file icon based on extension
   const getFileIcon = (filename: string, isFolder: boolean = false) => {
@@ -181,9 +187,40 @@ const FileExplorer: React.FC<FileExplorerProps> = ({ className, onFileSelect }) 
     console.log('Cutting', node.path);
   };
 
-  const handleDownload = (node: FileNode) => {
-    // TODO: Implement download
-    console.log('Downloading', node.path);
+  const handleDownload = async (node: FileNode) => {
+    if (!actionRunner || !webcontainer) {
+      console.error('WebContainer or ActionRunner not available');
+      return;
+    }
+
+    try {
+      setIsDownloading(true);
+      const downloadService = getDownloadService(actionRunner, webcontainer);
+      await downloadService.downloadFile(node);
+    } catch (error) {
+      console.error('Failed to download file:', error);
+      alert(`Failed to download file: ${error instanceof Error ? error.message : 'Unknown error'}`);
+    } finally {
+      setIsDownloading(false);
+    }
+  };
+
+  const handleDownloadProject = async () => {
+    if (!actionRunner || !webcontainer) {
+      console.error('WebContainer or ActionRunner not available');
+      return;
+    }
+
+    try {
+      setIsDownloading(true);
+      const downloadService = getDownloadService(actionRunner, webcontainer);
+      await downloadService.downloadProject();
+    } catch (error) {
+      console.error('Failed to download project:', error);
+      alert(`Failed to download project: ${error instanceof Error ? error.message : 'Unknown error'}`);
+    } finally {
+      setIsDownloading(false);
+    }
   };
 
   const renderFileNode = (node: FileNode, depth: number = 0) => {
@@ -262,7 +299,7 @@ const FileExplorer: React.FC<FileExplorerProps> = ({ className, onFileSelect }) 
             Cut
           </ContextMenuItem>
           {node.type === 'file' && (
-            <ContextMenuItem onClick={() => handleDownload(node)}>
+            <ContextMenuItem onClick={() => handleDownload(node)} disabled={isDownloading}>
               <Download className="w-4 h-4 mr-2" />
               Download
             </ContextMenuItem>
@@ -293,6 +330,16 @@ const FileExplorer: React.FC<FileExplorerProps> = ({ className, onFileSelect }) 
         <div className="flex items-center justify-between mb-2">
           <h3 className="text-sm font-medium text-gray-700 dark:text-gray-300">Files</h3>
           <div className="flex items-center space-x-1">
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={handleDownloadProject}
+              disabled={isDownloading || !files || files.length === 0}
+              className="h-6 w-6 p-0"
+              title="Download Project as ZIP"
+            >
+              <Archive className={`w-3 h-3 ${isDownloading ? 'animate-pulse' : ''}`} />
+            </Button>
             <Button
               variant="ghost"
               size="sm"

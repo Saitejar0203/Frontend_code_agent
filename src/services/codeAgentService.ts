@@ -263,7 +263,7 @@ async function sendChatMessageInternal(userInput: string, webcontainer: WebConta
           if (!webcontainer) {
             throw new Error('WebContainer not available for image generation');
           }
-          await imageGenerationService.generateAndMountImages(requests, webcontainer);
+          await imageGenerationService.generateAndMountImages(requests, webcontainer, actionRunner);
           console.log(`✅ Successfully processed ${requests.length} image generation requests`);
         } catch (error) {
           console.error('❌ Error processing image generation requests:', error);

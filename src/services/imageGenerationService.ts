@@ -3,6 +3,7 @@ import { createScopedLogger } from '../lib/utils/logger';
 const logger = createScopedLogger('ImageGenerationService');
 import { addFileModification } from '../lib/stores/chatStore';
 import type { WebContainer } from '@webcontainer/api';
+import type { ActionRunner } from '../lib/runtime/ActionRunner';
 
 export interface ImageGenerationRequest {
   localPath: string;
@@ -36,7 +37,7 @@ class ImageGenerationService {
   /**
    * Generate multiple images in parallel and mount them to WebContainer
    */
-  async generateAndMountImages(requests: ImageGenerationRequest[], webcontainerInstance: WebContainer): Promise<void> {
+  async generateAndMountImages(requests: ImageGenerationRequest[], webcontainerInstance: WebContainer, actionRunner?: ActionRunner): Promise<void> {
     if (!requests || requests.length === 0) {
       logger.warn('[ImageGenerationService] No image requests provided');
       return;
@@ -64,7 +65,7 @@ class ImageGenerationService {
       const successfulResults = batchResult.results.filter(result => result.success && result.image_base64);
       
       if (successfulResults.length > 0) {
-        await this.mountImagesToWebContainer(successfulResults, webcontainerInstance);
+        await this.mountImagesToWebContainer(successfulResults, webcontainerInstance, actionRunner);
       }
 
       // Log any failures
@@ -111,7 +112,7 @@ class ImageGenerationService {
   /**
    * Mount generated images to WebContainer
    */
-  private async mountImagesToWebContainer(results: ImageGenerationResponse[], webcontainerInstance: WebContainer): Promise<void> {
+  private async mountImagesToWebContainer(results: ImageGenerationResponse[], webcontainerInstance: WebContainer, actionRunner?: ActionRunner): Promise<void> {
     if (!webcontainerInstance) {
       throw new Error('WebContainer not available for mounting images');
     }
@@ -152,6 +153,16 @@ class ImageGenerationService {
       }
 
       logger.info(`[ImageGenerationService] Completed mounting images to WebContainer`);
+
+      // Refresh the file tree to show the newly mounted images
+      if (actionRunner) {
+        try {
+          await actionRunner.refreshFileTree();
+          logger.info(`[ImageGenerationService] File tree refreshed after mounting images`);
+        } catch (error) {
+          logger.warn(`[ImageGenerationService] Failed to refresh file tree:`, error);
+        }
+      }
 
     } catch (error) {
       logger.error('[ImageGenerationService] Error mounting images to WebContainer:', error);
