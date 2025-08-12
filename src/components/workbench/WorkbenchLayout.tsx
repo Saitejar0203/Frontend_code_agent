@@ -38,9 +38,8 @@ export function WorkbenchLayout({ className }: WorkbenchLayoutProps) {
     return saved ? JSON.parse(saved) : DEFAULT_PANEL_SIZES;
   });
   
-  const [isTerminalCollapsed, setIsTerminalCollapsed] = useState(false);
+  const [isTerminalCollapsed, setIsTerminalCollapsed] = useState(true);
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false);
-  const [activeBottomTab, setActiveBottomTab] = useState('terminal');
   const [terminalCount, setTerminalCount] = useState(1);
   const [activeTerminal, setActiveTerminal] = useState(0);
   
@@ -126,9 +125,12 @@ export function WorkbenchLayout({ className }: WorkbenchLayoutProps) {
             </div>
           </ResizablePanel>
 
-          <ResizableHandle withHandle />
 
-          {/* Main Editor Area */}
+
+          {/* Vertical separator line */}
+          <div className="w-px bg-gray-200 dark:bg-gray-700"></div>
+
+            {/* Main Editor Area */}
           <ResizablePanel defaultSize={panelSizes.editor} minSize={30}>
             <ResizablePanelGroup direction="vertical">
               {/* Main Content Area */}
@@ -136,7 +138,7 @@ export function WorkbenchLayout({ className }: WorkbenchLayoutProps) {
                 defaultSize={isTerminalCollapsed ? 100 : 70} 
                 minSize={30}
               >
-                <div className="h-full flex flex-col bg-white dark:bg-gray-900">
+                <div className="h-full flex flex-col bg-white dark:bg-gray-900 relative">
                   {/* Top Level Tabs */}
                   <Tabs value={activeTab} onValueChange={setActiveTab} className="h-full flex flex-col">
                     <div className="flex items-center justify-between px-4 py-2 border-b border-gray-200 dark:border-gray-700">
@@ -183,16 +185,24 @@ export function WorkbenchLayout({ className }: WorkbenchLayoutProps) {
                           <Artifact className="h-full border-0 rounded-none" />
                         </ResizablePanel>
                         
-                        <ResizableHandle withHandle />
+
                         
-                        {/* File Explorer Panel */}
+                        {/* Vertical separator line */}
+                        <div className="w-px bg-gray-200 dark:bg-gray-700"></div>
+ 
+                          
+                          {/* File Explorer Panel */}
                         <ResizablePanel defaultSize={30} minSize={20} maxSize={50}>
                           <FileExplorer className="h-full border-0 rounded-none" />
                         </ResizablePanel>
                         
-                        <ResizableHandle withHandle />
+
                         
-                        {/* Code Editor Panel */}
+                        {/* Vertical separator line */}
+                        <div className="w-px bg-gray-200 dark:bg-gray-700"></div>
+ 
+                          
+                          {/* Code Editor Panel */}
                         <ResizablePanel defaultSize={45} minSize={30}>
                           <CodeEditor className="h-full" />
                         </ResizablePanel>
@@ -204,36 +214,41 @@ export function WorkbenchLayout({ className }: WorkbenchLayoutProps) {
                       <Preview className="h-full" />
                     </TabsContent>
                   </Tabs>
+                  
+                  {/* Floating Show Terminal Button */}
+                  {isTerminalCollapsed && activeTab !== 'preview' && (
+                    <Button
+                      onClick={toggleTerminal}
+                      className="absolute bottom-4 right-4 bg-gradient-to-br from-blue-600 to-blue-700 hover:from-blue-700 hover:to-blue-800 text-white font-medium h-10 px-4 rounded-xl shadow-lg hover:shadow-xl transition-all duration-200 backdrop-blur-sm border border-blue-500/30 hover:border-blue-400/50 z-50"
+                    >
+                      <TerminalIcon className="w-4 h-4 mr-2" />
+                      <span className="text-sm">Show Terminal</span>
+                    </Button>
+                  )}
                 </div>
               </ResizablePanel>
 
               {/* Terminal/Bottom Panel - Only show when not on Preview tab */}
               {!isTerminalCollapsed && activeTab !== 'preview' && (
-                <>
-                  <ResizableHandle withHandle />
-                  <ResizablePanel defaultSize={30} minSize={15} maxSize={60}>
+                 <>
+                 {/* Horizontal separator line */}
+                 <div className="h-px bg-gray-200 dark:bg-gray-700"></div>
+ 
+                    <ResizablePanel defaultSize={30} minSize={15} maxSize={60}>
                     <div className="h-full flex flex-col bg-white dark:bg-gray-900">
                       {/* Terminal Header */}
                       <div className="flex items-center justify-between px-4 py-2 border-b border-gray-200 dark:border-gray-700">
-                        <Tabs value={activeBottomTab} onValueChange={setActiveBottomTab} className="flex-1">
-                          <TabsList className="h-8">
-                            <TabsTrigger value="terminal" className="text-xs">
-                              <TerminalIcon className="w-3 h-3 mr-1" />
-                              Terminal
-                              {terminalOutput && (
-                                <Badge variant="secondary" className="ml-1 h-4 text-xs">
-                                  {terminalOutput.split('\n').length - 1}
-                                </Badge>
-                              )}
-                            </TabsTrigger>
-                            <TabsTrigger value="output" className="text-xs">
-                              Output
-                            </TabsTrigger>
-                            <TabsTrigger value="problems" className="text-xs">
-                              Problems
-                            </TabsTrigger>
-                          </TabsList>
-                        </Tabs>
+                        <div className="flex-1">
+                          <div className="flex items-center">
+                            <TerminalIcon className="w-3 h-3 mr-2" />
+                            <span className="text-sm font-medium">Terminal</span>
+                            {terminalOutput && (
+                              <Badge variant="secondary" className="ml-2 h-4 text-xs">
+                                {terminalOutput.split('\n').length - 1}
+                              </Badge>
+                            )}
+                          </div>
+                        </div>
                         
                         <div className="flex items-center space-x-1">
                           <Button
@@ -257,67 +272,51 @@ export function WorkbenchLayout({ className }: WorkbenchLayoutProps) {
 
                       {/* Terminal Content */}
                       <div className="flex-1 overflow-hidden">
-                        <Tabs value={activeBottomTab} className="h-full">
-                          <TabsContent value="terminal" className="h-full m-0 p-0">
-                            <div className="h-full flex flex-col">
-                              {/* Terminal Tabs */}
-                              {terminalCount > 1 && (
-                                <div className="flex items-center px-2 py-1 bg-gray-50 dark:bg-gray-800 border-b border-gray-200 dark:border-gray-700">
-                                  {Array.from({ length: terminalCount }, (_, i) => (
-                                    <div
-                                      key={i}
-                                      className={`flex items-center px-2 py-1 text-xs cursor-pointer rounded ${
-                                        activeTerminal === i
-                                          ? 'bg-blue-100 dark:bg-blue-900 text-blue-900 dark:text-blue-100'
-                                          : 'hover:bg-gray-100 dark:hover:bg-gray-700'
-                                      }`}
-                                      onClick={() => setActiveTerminal(i)}
+                        <div className="h-full flex flex-col">
+                          {/* Terminal Tabs */}
+                          {terminalCount > 1 && (
+                            <div className="flex items-center px-2 py-1 bg-gray-50 dark:bg-gray-800 border-b border-gray-200 dark:border-gray-700">
+                              {Array.from({ length: terminalCount }, (_, i) => (
+                                <div
+                                  key={i}
+                                  className={`flex items-center px-2 py-1 text-xs cursor-pointer rounded ${
+                                    activeTerminal === i
+                                      ? 'bg-blue-100 dark:bg-blue-900 text-blue-900 dark:text-blue-100'
+                                      : 'hover:bg-gray-100 dark:hover:bg-gray-700'
+                                  }`}
+                                  onClick={() => setActiveTerminal(i)}
+                                >
+                                  <TerminalIcon className="w-3 h-3 mr-1" />
+                                  Terminal {i + 1}
+                                  {terminalCount > 1 && (
+                                    <button
+                                      onClick={(e) => {
+                                        e.stopPropagation();
+                                        closeTerminal(i);
+                                      }}
+                                      className="ml-1 text-gray-400 hover:text-gray-600"
                                     >
-                                      <TerminalIcon className="w-3 h-3 mr-1" />
-                                      Terminal {i + 1}
-                                      {terminalCount > 1 && (
-                                        <button
-                                          onClick={(e) => {
-                                            e.stopPropagation();
-                                            closeTerminal(i);
-                                          }}
-                                          className="ml-1 text-gray-400 hover:text-gray-600"
-                                        >
-                                          <X className="w-2 h-2" />
-                                        </button>
-                                      )}
-                                    </div>
-                                  ))}
+                                      <X className="w-2 h-2" />
+                                    </button>
+                                  )}
                                 </div>
-                              )}
-                              
-                              {/* Terminal Output */}
-                              <div className="flex-1 p-4 font-mono text-sm bg-black text-green-400 overflow-y-auto">
-                                {terminalOutput ? (
-                                  <pre className="whitespace-pre-wrap">{terminalOutput}</pre>
-                                ) : (
-                                  <div className="text-gray-500">
-                                    Terminal {activeTerminal + 1} - Ready
-                                    <br />
-                                    <span className="text-green-400">$</span> <span className="animate-pulse">_</span>
-                                  </div>
-                                )}
+                              ))}
+                            </div>
+                          )}
+                          
+                          {/* Terminal Output */}
+                          <div className="flex-1 p-4 font-mono text-sm bg-black text-green-400 overflow-y-auto">
+                            {terminalOutput ? (
+                              <pre className="whitespace-pre-wrap">{terminalOutput}</pre>
+                            ) : (
+                              <div className="text-gray-500">
+                                Terminal {activeTerminal + 1} - Ready
+                                <br />
+                                <span className="text-green-400">$</span> <span className="animate-pulse">_</span>
                               </div>
-                            </div>
-                          </TabsContent>
-                          
-                          <TabsContent value="output" className="h-full m-0 p-4">
-                            <div className="text-sm text-gray-600 dark:text-gray-400">
-                              <p>Build output and logs will appear here...</p>
-                            </div>
-                          </TabsContent>
-                          
-                          <TabsContent value="problems" className="h-full m-0 p-4">
-                            <div className="text-sm text-gray-600 dark:text-gray-400">
-                              <p>Code problems and diagnostics will appear here...</p>
-                            </div>
-                          </TabsContent>
-                        </Tabs>
+                            )}
+                          </div>
+                        </div>
                       </div>
                     </div>
                   </ResizablePanel>

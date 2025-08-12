@@ -2,7 +2,7 @@ import React, { useState, useRef, useEffect } from 'react';
 import { useStore } from '@nanostores/react';
 import { Send, User, Bot, StopCircle } from 'lucide-react';
 import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
+import EnhancedChatInput from '../chat/EnhancedChatInput';
 import { 
   chatStore, 
   addMessage, 
@@ -147,18 +147,11 @@ const CodeChatInterface: React.FC<CodeChatInterfaceProps> = ({
         <div ref={messagesEndRef} />
       </div>
 
-      {/* Input Area */}
-      <form onSubmit={handleSubmit} className="p-4 border-t border-gray-200 dark:border-gray-700">
-        <div className="flex gap-2">
-          <input
-            type="text"
-            value={input}
-            onChange={(e) => setInput(e.target.value)}
-            placeholder="Ask me to create a project, fix code, or help with development..."
-            disabled={isGenerating || hasQueuedMessages()}
-            className="flex-1 px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 dark:bg-gray-800 dark:text-white disabled:opacity-50"
-          />
-          {(isGenerating || hasQueuedMessages()) ? (
+      {/* Enhanced Input Area */}
+      {(isGenerating || hasQueuedMessages()) ? (
+        <div className="flex-shrink-0 border-t border-gray-200 dark:border-gray-700 bg-white p-4">
+          <div className="flex items-center justify-center gap-3">
+            <div className="text-gray-600 dark:text-gray-400">AI is thinking...</div>
             <button
               type="button"
               onClick={handleStop}
@@ -167,17 +160,16 @@ const CodeChatInterface: React.FC<CodeChatInterfaceProps> = ({
               <StopCircle className="w-4 h-4" />
               Stop
             </button>
-          ) : (
-            <button
-              type="submit"
-              disabled={!input.trim()}
-              className="px-4 py-2 bg-blue-500 text-white rounded-md hover:bg-blue-600 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
-            >
-              Send
-            </button>
-          )}
+          </div>
         </div>
-      </form>
+      ) : (
+        <EnhancedChatInput
+          value={input}
+          onChange={setInput}
+          onSend={() => handleSubmit(new Event('submit') as any)}
+          disabled={isGenerating || hasQueuedMessages()}
+        />
+      )}
     </div>
   );
 };
