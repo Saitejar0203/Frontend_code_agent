@@ -3,7 +3,7 @@ import { StreamingMessageParser, ParserCallbacks } from '@/lib/runtime/Streaming
 import { ActionRunner } from '@/lib/runtime/ActionRunner';
 import { addMessage, updateMessage, setGenerating, setThinking, addToConversationHistory, buildConversationHistory, type Message } from '@/lib/stores/chatStore';
 import { chatStore } from '@/lib/stores/chatStore';
-import { addArtifact, addArtifactAndPrepareExecution, addActionToArtifact, addOrUpdateFileFromAction, resetWorkbenchForNewConversation } from '@/lib/stores/workbenchStore';
+import { addArtifact, addArtifactAndPrepareExecution, addActionToArtifact, addOrUpdateFileFromAction, resetWorkbenchForNewConversation, workbenchStore } from '@/lib/stores/workbenchStore';
 import { WebContainer } from '@webcontainer/api';
 import { MAX_RESPONSE_SEGMENTS, CONTINUE_PROMPT, isTruncationFinishReason, isNullResponse, MAX_VALIDATION_ITERATIONS, VALIDATION_PROMPT, isValidationApproved } from '@/lib/constants/continuation';
 import { imageGenerationService } from './imageGenerationService';
@@ -357,15 +357,67 @@ async function sendChatMessageInternal(userInput: string, webcontainer: WebConta
     };
     
     // Build conversation history for context
-    const conversationHistory = buildConversationHistory();
+    let conversationHistory = buildConversationHistory();
     console.log('📚 Built conversation history with', conversationHistory.length, 'entries');
     
-    // Use the existing streamAgentResponse function
-    console.log('🌐 Calling streamAgentResponse with input:', userInput);
-    rawResponse = await streamAgentResponse(userInput, callbacks, conversationHistory);
-    console.log('✅ streamAgentResponse completed with raw response length:', rawResponse.length);
+    // Linear orchestration loop for multi-segment responses and validation
+    let currentPrompt = userInput;
+    let segmentCount = 0;
+    let fullCombinedResponse = '';
     
-    // Now update conversation history with the complete raw response
+    while (true) {
+      console.log('🌐 Calling streamAgentResponse with prompt:', currentPrompt, 'segment:', segmentCount);
+      const result = await streamAgentResponse(currentPrompt, callbacks, conversationHistory, segmentCount);
+      console.log('✅ streamAgentResponse completed with response length:', result.fullResponse.length, 'finishReason:', result.finishReason);
+      
+      // Accumulate the response
+      fullCombinedResponse += result.fullResponse;
+      rawResponse = fullCombinedResponse;
+      
+      // Check if we need to continue due to truncation
+      if (isTruncationFinishReason(result.finishReason) || isNullResponse(result.fullResponse)) {
+        if (segmentCount < MAX_RESPONSE_SEGMENTS - 1) {
+          console.log('🔄 Response truncated, continuing...', { finishReason: result.finishReason, segmentCount });
+          
+          // Update conversation history with current response
+          if (result.fullResponse.trim()) {
+            conversationHistory.push({ role: 'assistant', content: result.fullResponse });
+          }
+          conversationHistory.push({ role: 'user', content: CONTINUE_PROMPT });
+          
+          // Set up for next iteration
+          currentPrompt = CONTINUE_PROMPT;
+          segmentCount++;
+          continue;
+        } else {
+          console.warn('⚠️ Maximum continuation segments reached, stopping');
+          break;
+        }
+      }
+      
+      // Check if we need to perform validation
+      const isValidationCall = currentPrompt === VALIDATION_PROMPT;
+      
+      if (result.finishReason === 'STOP' && !isValidationCall && result.fullResponse.trim()) {
+        console.log('🔍 Finish reason is STOP, starting validation loop for completed response...');
+        
+        // Update conversation history with current response
+        conversationHistory.push({ role: 'assistant', content: result.fullResponse });
+        
+        // Perform validation loop
+        const validationResponse = await performValidationLoop(conversationHistory, callbacks, segmentCount);
+        
+        // Add validation response to combined response
+        fullCombinedResponse += validationResponse;
+        rawResponse = fullCombinedResponse;
+        break;
+      }
+      
+      // If we reach here, we're done
+      break;
+    }
+    
+    // Update conversation history with the complete raw response
     const lastMessage = chatStore.get().messages.slice(-1)[0];
     if (lastMessage && lastMessage.sender === 'agent' && rawResponse.trim()) {
       updateMessage(lastMessage.id, { rawContent: rawResponse });
@@ -443,17 +495,32 @@ async function performValidationLoop(
     ];
     
     // Stream validation response
-    const currentValidationResponse = await streamAgentResponse(
+    const result = await streamAgentResponse(
       VALIDATION_PROMPT,
       callbacks,
       validationHistory,
       segmentCount + 1
     );
     
-    validationResponse += currentValidationResponse;
+    // Handle empty responses
+    if (!result.fullResponse || result.fullResponse.trim() === '') {
+      console.log(`⚠️ Empty response in validation iteration ${i + 1}, adding placeholder`);
+      const placeholderResponse = `[Empty response in validation iteration ${i + 1}]`;
+      validationResponse += placeholderResponse;
+      
+      // Add placeholder to conversation history
+      conversationHistory.push({
+        role: 'assistant',
+        content: placeholderResponse
+      });
+      
+      continue;
+    }
+    
+    validationResponse += result.fullResponse;
     
     // Check if validation is approved
-    if (isValidationApproved(currentValidationResponse)) {
+    if (isValidationApproved(result.fullResponse)) {
       console.log('✅ Validation approved, stopping validation loop');
       break;
     }
@@ -461,7 +528,7 @@ async function performValidationLoop(
     // Add validation response to history for next iteration
     conversationHistory.push({
       role: 'assistant',
-      content: currentValidationResponse
+      content: result.fullResponse
     });
     
     console.log(`🔄 Validation iteration ${i + 1} completed, continuing...`);
@@ -471,7 +538,12 @@ async function performValidationLoop(
   return validationResponse;
 }
 
-export async function streamAgentResponse(prompt: string, callbacks: GeminiParserCallbacks, conversationHistory: Array<{role: string, content: string}> = [], segmentCount: number = 0) {
+export async function streamAgentResponse(
+  prompt: string, 
+  callbacks: GeminiParserCallbacks, 
+  conversationHistory: Array<{role: string, content: string}> = [], 
+  segmentCount: number = 0
+): Promise<{ fullResponse: string; finishReason: string | null }> {
   console.log('🔄 streamAgentResponse started with prompt:', prompt, 'segment:', segmentCount);
   const parser = new StreamingMessageParser(callbacks);
   // Use the new Gemini API endpoint
@@ -547,46 +619,7 @@ export async function streamAgentResponse(prompt: string, callbacks: GeminiParse
               if (parsed.done) {
                 console.log('🏁 Received completion signal with finish_reason:', parsed.finish_reason);
                 lastFinishReason = parsed.finish_reason;
-                
-                // Check if we need to continue due to truncation
-                if (isTruncationFinishReason(lastFinishReason) || isNullResponse(fullResponse)) {
-                  if (segmentCount < MAX_RESPONSE_SEGMENTS - 1) {
-                    console.log('🔄 Response truncated, continuing...', { finishReason: lastFinishReason, segmentCount });
-                    
-                    // Update conversation history with current response
-                    const updatedHistory = [...conversationHistory];
-                    if (fullResponse.trim()) {
-                      updatedHistory.push({ role: 'assistant', content: fullResponse });
-                    }
-                    updatedHistory.push({ role: 'user', content: CONTINUE_PROMPT });
-                    
-                    // Continue with the same callbacks and updated history
-                    const continuationResponse = await streamAgentResponse(CONTINUE_PROMPT, callbacks, updatedHistory, segmentCount + 1);
-                    return fullResponse + continuationResponse;
-                  } else {
-                    console.warn('⚠️ Maximum continuation segments reached, stopping');
-                  }
-                }
-                
-                // Check if we need to perform validation
-                const isValidationCall = prompt === VALIDATION_PROMPT;
-                
-                if (lastFinishReason === 'STOP' && !isValidationCall && fullResponse.trim()) {
-                  console.log('🔍 Finish reason is STOP, starting validation loop for completed multi-segment response...');
-                  
-                  // Update conversation history with current response
-                  const updatedHistory = [...conversationHistory];
-                  updatedHistory.push({ role: 'assistant', content: fullResponse });
-                  
-                  // Perform validation loop
-                  const validationResponse = await performValidationLoop(updatedHistory, callbacks, segmentCount);
-                  
-                  // Return combined response
-                  return fullResponse + validationResponse;
-                }
-                
-                callbacks.onComplete?.();
-                return fullResponse;
+                // Just store the finish reason, don't make recursive calls
               }
               
               // Handle Gemini API response format
@@ -693,18 +726,19 @@ export async function streamAgentResponse(prompt: string, callbacks: GeminiParse
     // --- END OF THE FIX ---
     
     console.log('📊 Returning full response with length:', fullResponse.length);
-    return fullResponse;
+    return { fullResponse, finishReason: lastFinishReason };
   } catch (error) {
     console.error('Error in streamAgentResponse:', error);
     callbacks.onError?.(error instanceof Error ? error.message : 'Unknown error');
-    throw error;
+    return { fullResponse: '', finishReason: null };
   }
 }
 
 export async function generateStructuredProject(prompt: string, callbacks: GeminiParserCallbacks) {
-  // Use the streamAgentResponse function which now handles continuation automatically
+  // Use the streamAgentResponse function which now returns a result object
   try {
-    await streamAgentResponse(prompt, callbacks, []);
+    const result = await streamAgentResponse(prompt, callbacks, []);
+    console.log('✅ generateStructuredProject completed with response length:', result.fullResponse.length, 'finishReason:', result.finishReason);
   } catch (error) {
     console.error('Error in generateStructuredProject:', error);
     callbacks.onError?.(error instanceof Error ? error.message : 'Unknown error');

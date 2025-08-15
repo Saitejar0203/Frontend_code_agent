@@ -12,7 +12,7 @@ export const MAX_RESPONSE_SEGMENTS = 5;
  */
 export const CONTINUE_PROMPT = `Your previous response was truncated due to a token limit. Your task is to continue generating the response by following these critical rules, in order of precedence: 
  
- 1.  **If Inside an Action Tag:** If the truncation occurred *inside* a \`<boltAction>...\</boltAction>\` block, you **MUST** discard the partial action and restart by re-emitting the **entire, most recent \`<boltAction>\` tag** from its beginning. Do not re-emit the parent \`<boltArtifact>\` or any actions that were already completed. 
+ 1.  **If Inside an Action or <boltImageTask> Tag:** If the truncation occurred *inside* a \`<boltAction>...\</boltAction>\` block or \`<boltImageTask>...\</boltImageTask>\` block you **MUST** discard the partial action and restart by re-emitting the **entire, most recent \`<boltAction>\` or \`<boltImageTask>\` tag** from its beginning. Do not re-emit the parent \`<boltArtifact>\` or any actions that were already completed. 
  
  2.  **If Generating Plain Text:** If the truncation occurred while generating plain text (text for the chat UI, *outside* of any action tags), you **MUST** continue generating from the exact point of interruption. 
  
@@ -57,7 +57,7 @@ export function isNullResponse(content: string | null | undefined): boolean {
  * Maximum number of validation iterations allowed
  * This prevents infinite validation loops
  */
-export const MAX_VALIDATION_ITERATIONS = 1;
+export const MAX_VALIDATION_ITERATIONS = 3;
 
 /**
  * Validation prompt to send when checking code quality and completeness
