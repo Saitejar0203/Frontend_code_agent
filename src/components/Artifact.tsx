@@ -164,7 +164,11 @@ function ActionItem({ action, index, status }: ActionItemProps) {
       case 'pending':
         return 'Pending';
       case 'running':
-        return 'Running';
+        // For file actions, show more specific status based on operation
+        if (action.type === 'file' && action.operation) {
+          return action.operation === 'create' ? 'Creating...' : 'Updating...';
+        }
+        return 'Running...';
       case 'complete':
         return 'Complete';
       case 'failed':

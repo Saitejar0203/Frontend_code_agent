@@ -13,6 +13,7 @@ import {
 import { addFileModification } from '@/lib/stores/chatStore';
 import { FileSystemTree, WebContainer } from '@webcontainer/api';
 import { getPreviewManager } from '@/lib/preview/PreviewManager';
+import { type BoltAction } from './types';
 
 import { createScopedLogger } from './logger';
 
@@ -29,11 +30,7 @@ function decodeHtmlEntities(text: string): string {
 
 export type ActionStatus = 'pending' | 'running' | 'complete' | 'aborted' | 'failed';
 
-export interface BoltAction {
-  type: 'file' | 'shell';
-  filePath?: string;
-  content: string;
-}
+
 
 export interface BaseActionState extends BoltAction {
   status: Exclude<ActionStatus, 'failed'>;
@@ -124,7 +121,7 @@ class ActionRunner {
    * Execute a clean BoltAction object
    * This is the main entry point for action execution
    */
-  public runAction(action: BoltAction, artifactId?: string): string {
+  public async runAction(action: BoltAction, artifactId?: string): Promise<string> {
     const actionId = `${action.type}_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
     
     // Store action and artifact IDs for tracking
@@ -133,9 +130,20 @@ class ActionRunner {
       this.artifactIdMap.set(action, artifactId);
     }
 
+    // For file actions, detect operation type by checking file existence
     if (action.type === 'file' && action.filePath) {
-      this.logger.info(`Queuing file: ${action.filePath} (${action.content.length} chars)`);
-      appendTerminalOutput(`📄 Queuing file: ${action.filePath} (${action.content.length} chars)\n`);
+      try {
+        // Check if file exists in WebContainer filesystem
+        const fileExists = await this.checkFileExists(action.filePath);
+        action.operation = fileExists ? 'update' : 'create';
+        
+        this.logger.info(`Queuing file: ${action.filePath} (${action.content.length} chars) - ${action.operation}`);
+        appendTerminalOutput(`📄 Queuing file: ${action.filePath} (${action.content.length} chars) - ${action.operation}\n`);
+      } catch (error) {
+        // If we can't check file existence, default to 'update'
+        action.operation = 'update';
+        this.logger.warn(`Could not check file existence for ${action.filePath}, defaulting to update`);
+      }
       this.fileActionQueue.push(action);
     } else if (action.type === 'shell') {
       this.logger.info(`Queuing command: ${action.content}`);
@@ -168,7 +176,7 @@ class ActionRunner {
   /**
    * @deprecated Use runAction(action: BoltAction, artifactId?: string) instead
    */
-  public handleFile(filePath: string, content: string, artifactId?: string): string {
+  public handleFile(filePath: string, content: string, artifactId?: string): Promise<string> {
     return this.runAction({
       type: 'file',
       filePath,
@@ -179,7 +187,7 @@ class ActionRunner {
   /**
    * @deprecated Use runAction(action: BoltAction, artifactId?: string) instead
    */
-  public handleCommand(command: string, artifactId?: string): string {
+  public handleCommand(command: string, artifactId?: string): Promise<string> {
     return this.runAction({
       type: 'shell',
       content: command
@@ -865,6 +873,20 @@ class ActionRunner {
    */
   public async refreshFileTree(): Promise<void> {
     await this.updateFileTree();
+  }
+
+  /**
+   * Check if a file exists in the WebContainer filesystem
+   */
+  private async checkFileExists(filePath: string): Promise<boolean> {
+    try {
+      const container = await this.#webcontainer;
+      await container.fs.stat(filePath);
+      return true;
+    } catch (error) {
+      // If stat throws an error, the file doesn't exist
+      return false;
+    }
   }
 
   private convertToFileNodes(tree: FileSystemTree, basePath = ''): FileNode[] {

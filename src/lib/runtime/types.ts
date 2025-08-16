@@ -2,6 +2,7 @@ export interface BoltAction {
   type: 'file' | 'shell';
   content: string;
   filePath?: string;
+  operation?: 'create' | 'update';
 }
 
 export interface BoltArtifact {

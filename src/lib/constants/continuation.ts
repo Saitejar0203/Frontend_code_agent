@@ -12,6 +12,8 @@ export const MAX_RESPONSE_SEGMENTS = 5;
  */
 export const CONTINUE_PROMPT = `Your previous response was truncated due to a token limit. Your task is to continue generating the response by following these critical rules, in order of precedence: 
  
+ **ARTIFACT CONTEXT:** First, if your previous response was within a <boltArtifact> tag, you MUST re-establish the artifact context by starting with the appropriate <boltArtifact id="[artifactId]" title="[title]"> tag before continuing with any actions.
+ 
  1.  **If Inside an Action or <boltImageTask> Tag:** If the truncation occurred *inside* a \`<boltAction>...\</boltAction>\` block or \`<boltImageTask>...\</boltImageTask>\` block you **MUST** discard the partial action and restart by re-emitting the **entire, most recent \`<boltAction>\` or \`<boltImageTask>\` tag** from its beginning. Do not re-emit the parent \`<boltArtifact>\` or any actions that were already completed. 
  
  2.  **If Generating Plain Text:** If the truncation occurred while generating plain text (text for the chat UI, *outside* of any action tags), you **MUST** continue generating from the exact point of interruption. 
@@ -72,7 +74,7 @@ export const VALIDATION_PROMPT = `Review the entire conversation between human a
 IMPORTANT: If terminal output is provided below, analyze it for any errors, warnings, or issues. Note that some commands from the conversation history might still be processing or pending execution.
 
 If the code is satisfactory and meets all requirements, respond with <validation_complete> and nothing else #very important to use only <validation_complete>
-If code corrections are needed, provide ONLY the necessary <boltAction> tags with complete file modifications followed by terminal commands that should be executed AFTER all pending commands complete. Do NOT include explanatory text. **You MUST NOT create a \`plan.md\` file during this validation step.**`;
+If code corrections are needed, provide ONLY the necessary corrective actions. If the original response was within a <boltArtifact> context, wrap your corrective actions within the appropriate <boltArtifact id="[artifactId]" title="[title]"> tag. Provide complete file modifications followed by terminal commands that should be executed AFTER all pending commands complete. Do NOT include explanatory text. **You MUST NOT create a \`plan.md\` file during this validation step.**`;
 
 /**
  * Tags that indicate validation is complete and approved
