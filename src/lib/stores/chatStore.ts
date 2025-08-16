@@ -31,6 +31,9 @@ export interface ChatState {
   error: string | null;
   conversationHistory: ConversationEntry[];
   fileModifications: FileModificationSummary[];
+  assistantStatus: 'idle' | 'thinking' | 'validation' | 'max_tokens' | 'completed';
+  statusMessage: string;
+  statusStartTime: Date | null;
 }
 
 export const chatStore = map<ChatState>({
@@ -41,6 +44,9 @@ export const chatStore = map<ChatState>({
   error: null,
   conversationHistory: [],
   fileModifications: [],
+  assistantStatus: 'idle',
+  statusMessage: '',
+  statusStartTime: null,
 });
 
 // Actions
@@ -138,6 +144,43 @@ export function startNewChat() {
 }
 
 // Clear only UI messages while preserving conversation history
+
+// Assistant status management
+export function setAssistantStatus(
+  status: 'idle' | 'thinking' | 'validation' | 'max_tokens' | 'completed',
+  message?: string
+) {
+  chatStore.setKey('assistantStatus', status);
+  if (message !== undefined) {
+    chatStore.setKey('statusMessage', message);
+  }
+  
+  // Set start time for active states, preserve for completed state
+  if (status !== 'idle' && status !== 'completed') {
+    chatStore.setKey('statusStartTime', new Date());
+  } else if (status === 'idle') {
+    chatStore.setKey('statusStartTime', null);
+  }
+}
+
+export function setStatusMessage(message: string) {
+  chatStore.setKey('statusMessage', message);
+}
+
+export function clearAssistantStatus() {
+  chatStore.setKey('assistantStatus', 'idle');
+  chatStore.setKey('statusMessage', '');
+  chatStore.setKey('statusStartTime', null);
+}
+
+export function completeAssistantStatus(message?: string) {
+  const startTime = chatStore.get().statusStartTime;
+  const elapsedTime = startTime ? Math.floor((new Date().getTime() - startTime.getTime()) / 1000) : 0;
+  
+  chatStore.setKey('assistantStatus', 'completed');
+  chatStore.setKey('statusMessage', message || `Completed in ${elapsedTime}s`);
+  // Keep statusStartTime for elapsed time calculation
+}
 export function clearUIMessages() {
   chatStore.setKey('messages', []);
   chatStore.setKey('error', null);

@@ -1,7 +1,7 @@
 // frontend/src/services/codeAgentService.ts
 import { StreamingMessageParser, ParserCallbacks } from '@/lib/runtime/StreamingMessageParser';
 import { ActionRunner } from '@/lib/runtime/ActionRunner';
-import { addMessage, updateMessage, setGenerating, setThinking, addToConversationHistory, buildConversationHistory, type Message } from '@/lib/stores/chatStore';
+import { addMessage, updateMessage, setGenerating, setThinking, addToConversationHistory, buildConversationHistory, setAssistantStatus, setStatusMessage, clearAssistantStatus, completeAssistantStatus, type Message } from '@/lib/stores/chatStore';
 import { chatStore } from '@/lib/stores/chatStore';
 import { addArtifact, addArtifactAndPrepareExecution, addActionToArtifact, addOrUpdateFileFromAction, resetWorkbenchForNewConversation, workbenchStore } from '@/lib/stores/workbenchStore';
 import { WebContainer } from '@webcontainer/api';
@@ -20,6 +20,7 @@ class MessageQueue {
   private queue: QueuedMessage[] = [];
   private isProcessing = false;
   private webcontainerReadyCallbacks: (() => void)[] = [];
+  private isValidationInProgress = false;
 
   enqueue(userInput: string): string {
     const queuedMessage: QueuedMessage = {
@@ -54,10 +55,14 @@ class MessageQueue {
     if (index !== -1) {
       this.queue.splice(index, 1);
       
-      // Reset UI state if queue is empty
+      // Reset UI state if queue is empty and validation is not in progress
       if (this.queue.length === 0) {
         setGenerating(false);
         setThinking(false);
+        // Only complete assistant status if validation is not in progress
+        if (!this.isValidationInProgress) {
+          completeAssistantStatus();
+        }
       }
       
       console.log('🗑️ Message dequeued:', messageId, 'Queue size:', this.queue.length);
@@ -126,9 +131,20 @@ class MessageQueue {
 
   clear(): void {
     this.queue = [];
+    this.isProcessing = false;
+    this.isValidationInProgress = false;
     setGenerating(false);
     setThinking(false);
     console.log('🧹 Message queue cleared');
+  }
+
+  setValidationInProgress(inProgress: boolean): void {
+    this.isValidationInProgress = inProgress;
+    console.log('🔍 Validation status changed:', inProgress ? 'IN PROGRESS' : 'COMPLETED');
+  }
+
+  isValidationActive(): boolean {
+    return this.isValidationInProgress;
   }
 }
 
@@ -207,6 +223,8 @@ async function sendChatMessageInternal(userInput: string, webcontainer: WebConta
   
   setGenerating(true);
   setThinking(true);
+  setAssistantStatus('thinking');
+  setStatusMessage('Processing your request...');
   console.log('⏳ Set generating to true and thinking to true');
   
   // ----------------- START OF CORRECTED FIX -----------------
@@ -286,6 +304,8 @@ async function sendChatMessageInternal(userInput: string, webcontainer: WebConta
         console.log('📝 Received text chunk:', text);
         // Stop thinking animation when first text arrives
         setThinking(false);
+        setAssistantStatus('generating');
+        setStatusMessage('Generating response...');
         if (text && text.trim()) {
           // Only accumulate text that is not inside XML tags
           const parser = (callbacks as any)._parser;
@@ -364,10 +384,22 @@ async function sendChatMessageInternal(userInput: string, webcontainer: WebConta
     let currentPrompt = userInput;
     let segmentCount = 0;
     let fullCombinedResponse = '';
+    let willPerformValidation = false;
     
     while (true) {
       console.log('🌐 Calling streamAgentResponse with prompt:', currentPrompt, 'segment:', segmentCount);
-      const result = await streamAgentResponse(currentPrompt, callbacks, conversationHistory, segmentCount);
+      
+      // Determine if validation will be needed after this response
+       const isValidationCall = currentPrompt === VALIDATION_PROMPT;
+       const mightNeedValidation = !isValidationCall && segmentCount === 0; // Only first segment of non-validation calls might need validation
+       
+       // Create custom callbacks that suppress onComplete if validation might be needed
+        const customCallbacks = {
+          ...callbacks,
+          onComplete: mightNeedValidation ? undefined : callbacks.onComplete
+        };
+        
+        const result = await streamAgentResponse(currentPrompt, customCallbacks, conversationHistory, segmentCount);
       console.log('✅ streamAgentResponse completed with response length:', result.fullResponse.length, 'finishReason:', result.finishReason);
       
       // Accumulate the response
@@ -378,6 +410,8 @@ async function sendChatMessageInternal(userInput: string, webcontainer: WebConta
       if (isTruncationFinishReason(result.finishReason) || isNullResponse(result.fullResponse)) {
         if (segmentCount < MAX_RESPONSE_SEGMENTS - 1) {
           console.log('🔄 Response truncated, continuing...', { finishReason: result.finishReason, segmentCount });
+          setAssistantStatus('max_tokens');
+          setStatusMessage('Continuing due to length limit...');
           
           // Update conversation history with current response
           if (result.fullResponse.trim()) {
@@ -396,25 +430,34 @@ async function sendChatMessageInternal(userInput: string, webcontainer: WebConta
       }
       
       // Check if we need to perform validation
-      const isValidationCall = currentPrompt === VALIDATION_PROMPT;
-      
       if (result.finishReason === 'STOP' && !isValidationCall && result.fullResponse.trim()) {
-        console.log('🔍 Finish reason is STOP, starting validation loop for completed response...');
+        console.log('🔍 Finish reason is STOP, will perform validation after completing UI state...');
+        willPerformValidation = true;
         
         // Update conversation history with current response
         conversationHistory.push({ role: 'assistant', content: result.fullResponse });
         
-        // Perform validation loop
-        const validationResponse = await performValidationLoop(conversationHistory, callbacks, segmentCount);
-        
-        // Add validation response to combined response
-        fullCombinedResponse += validationResponse;
-        rawResponse = fullCombinedResponse;
+        // onComplete will be called after validation completes
         break;
       }
       
       // If we reach here, we're done
       break;
+    }
+    
+    // Handle validation after UI state is properly managed
+    if (willPerformValidation) {
+      console.log('🔍 Starting validation loop for completed response...');
+      
+      // Perform validation loop
+      const validationResponse = await performValidationLoop(conversationHistory, callbacks, segmentCount);
+      
+      // Add validation response to combined response
+      fullCombinedResponse += validationResponse;
+      rawResponse = fullCombinedResponse;
+      
+      // Now that validation is complete, reset UI states
+      callbacks.onComplete?.();
     }
     
     // Update conversation history with the complete raw response
@@ -437,6 +480,10 @@ async function sendChatMessageInternal(userInput: string, webcontainer: WebConta
     addMessage(errorMessage);
     setGenerating(false);
     setThinking(false);
+    
+    // Clear validation flag in case of error
+    messageQueue.setValidationInProgress(false);
+    clearAssistantStatus();
   } finally {
     // setGenerating(false) is now handled in onComplete callback
   }
@@ -476,6 +523,12 @@ async function performValidationLoop(
   segmentCount: number = 0
 ): Promise<string> {
   console.log('🔍 Starting validation loop...');
+  
+  // Set validation flag to prevent premature status completion
+  messageQueue.setValidationInProgress(true);
+  
+  setAssistantStatus('validation');
+  setStatusMessage('Starting validation...');
   let validationResponse = '';
   
   for (let i = 0; i < MAX_VALIDATION_ITERATIONS; i++) {
@@ -535,6 +588,11 @@ async function performValidationLoop(
   }
   
   console.log('🏁 Validation loop completed');
+  
+  // Clear validation flag and complete status
+  messageQueue.setValidationInProgress(false);
+  completeAssistantStatus('Validation completed');
+  
   return validationResponse;
 }
 
@@ -726,6 +784,10 @@ export async function streamAgentResponse(
     return { fullResponse, finishReason: lastFinishReason };
   } catch (error) {
     console.error('Error in streamAgentResponse:', error);
+    
+    // Clear validation flag in case of error
+    messageQueue.setValidationInProgress(false);
+    
     callbacks.onError?.(error instanceof Error ? error.message : 'Unknown error');
     return { fullResponse: '', finishReason: null };
   }
