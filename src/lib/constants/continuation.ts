@@ -71,7 +71,7 @@ export const VALIDATION_PROMPT = `Review the entire conversation between human a
 
 IMPORTANT: If terminal output is provided below, analyze it for any errors, warnings, or issues. Note that some commands from the conversation history might still be processing or pending execution.
 
-If the code is satisfactory and meets all requirements, respond with <validation_complete>. 
+If the code is satisfactory and meets all requirements, respond with <validation_complete> and nothing else #very important to use only <validation_complete>
 If code corrections are needed, provide ONLY the necessary <boltAction> tags with complete file modifications followed by terminal commands that should be executed AFTER all pending commands complete. Do NOT include explanatory text. **You MUST NOT create a \`plan.md\` file during this validation step.**`;
 
 /**

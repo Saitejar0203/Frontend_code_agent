@@ -562,11 +562,8 @@ export async function streamAgentResponse(
       stream: true,
     };
 
-    // Add thinking configuration only for validation calls with Gemini 2.5 Pro
+    // Use Gemini 2.5 Pro for validation calls without thinking budget limitation
     if (isValidationCall) {
-      requestBody.thinking_config = {
-        thinking_budget: 128  // Minimum for Gemini 2.5 Pro
-      };
       requestBody.model_override = "gemini-2.5-pro"; // Ensure we're using Pro
     }
 
