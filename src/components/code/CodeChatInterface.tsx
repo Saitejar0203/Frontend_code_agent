@@ -1,6 +1,6 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { useStore } from '@nanostores/react';
-import { Send, User, Bot, StopCircle } from 'lucide-react';
+import { Send, StopCircle } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import EnhancedChatInput from '../chat/EnhancedChatInput';
 import { 
@@ -79,12 +79,11 @@ const CodeChatInterface: React.FC<CodeChatInterfaceProps> = ({
   };
 
   return (
-    <div className={`h-full flex flex-col bg-white dark:bg-gray-900 ${className}`}>
+    <div className={`h-full flex flex-col bg-white dark:bg-gray-900 min-h-0 ${className}`}>
       {/* Messages Area */}
-      <div className="flex-1 overflow-y-auto p-4 space-y-4">
+      <div className="flex-1 min-h-0 overflow-y-auto p-4 space-y-4">
         {messages.length === 0 ? (
           <div className="text-center text-gray-500 dark:text-gray-400 mt-8">
-            <Bot className="w-12 h-12 mx-auto mb-4 opacity-50" />
             <p>Start a conversation to begin coding!</p>
             <p className="text-sm mt-2">Describe what you want to build and I'll help you create it.</p>
           </div>
@@ -97,45 +96,42 @@ const CodeChatInterface: React.FC<CodeChatInterfaceProps> = ({
             return (
               <div
                 key={message.id}
-                className={`flex gap-4 p-6 w-full rounded-lg ${
-                  isUserMessage || !isGenerating || (isGenerating && !isLast)
-                    ? 'bg-gray-50 dark:bg-gray-800/50'
-                    : 'bg-gradient-to-b from-gray-50 dark:from-gray-800/50 from-30% to-transparent'
-                } ${!isFirst ? 'mt-4' : ''}`}
+                className={`w-full ${!isFirst ? 'mt-4' : ''}`}
               >
                 {isUserMessage ? (
-                  <div className="flex items-center justify-center w-8 h-8 overflow-hidden bg-blue-600 text-white rounded-full shrink-0 self-start">
-                    <User className="w-4 h-4" />
+                  // User message - right aligned with bubble
+                  <div className="flex justify-end px-4 py-2">
+                    <div className="flex flex-col items-end max-w-[80%]">
+                      <UserMessage content={message.content} />
+                      <div className="text-xs text-gray-500 dark:text-gray-400 mt-1 mr-2">
+                        {message.timestamp.toLocaleTimeString()}
+                      </div>
+                    </div>
                   </div>
                 ) : (
-                  <div className="flex items-center justify-center w-8 h-8 overflow-hidden bg-gray-600 text-white rounded-full shrink-0 self-start">
-                    <Bot className="w-4 h-4" />
+                  // Assistant message - left aligned without background
+                  <div className="px-4 py-2">
+                    <div className="flex flex-col w-full min-w-0">
+                      <AssistantMessage 
+                        content={message.content} 
+                        isStreaming={message.isStreaming || false}
+                      />
+                      <div className="text-xs text-gray-500 dark:text-gray-400 mt-2">
+                        {message.timestamp.toLocaleTimeString()}
+                      </div>
+                    </div>
                   </div>
                 )}
-                <div className="grid grid-cols-1 w-full min-w-0">
-                  {isUserMessage ? (
-                    <UserMessage content={message.content} />
-                  ) : (
-                    <AssistantMessage 
-                      content={message.content} 
-                      isStreaming={message.isStreaming || false}
-                    />
-                  )}
-                  <div className="text-xs text-gray-500 dark:text-gray-400 mt-2">
-                    {message.timestamp.toLocaleTimeString()}
-                  </div>
-                </div>
               </div>
             );
           })
         )}
         {isThinking && (
-          <div className="flex gap-4 p-6 w-full rounded-lg bg-gray-50 dark:bg-gray-800/50">
-            <div className="flex items-center justify-center w-8 h-8 overflow-hidden bg-gray-600 text-white rounded-full shrink-0 self-start">
-              <Bot className="w-4 h-4" />
-            </div>
-            <div className="grid grid-cols-1 w-full min-w-0">
-              <ThinkingAnimation />
+          <div className="w-full mt-4">
+            <div className="px-4 py-2">
+              <div className="flex flex-col w-full min-w-0">
+                <ThinkingAnimation />
+              </div>
             </div>
           </div>
         )}

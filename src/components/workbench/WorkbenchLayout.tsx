@@ -112,11 +112,11 @@ export function WorkbenchLayout({ className }: WorkbenchLayoutProps) {
             onCollapse={() => setIsSidebarCollapsed(true)}
             onExpand={() => setIsSidebarCollapsed(false)}
           >
-            <div className="h-full flex flex-col">
-              <div className="p-2 border-b border-gray-200 dark:border-gray-700">
+            <div className="h-full flex flex-col min-h-0">
+              <div className="p-2 border-b border-gray-200 dark:border-gray-700 flex-shrink-0">
                 <h3 className="text-sm font-medium text-gray-700 dark:text-gray-300">Chat</h3>
               </div>
-              <div className="flex-1 p-2">
+              <div className="flex-1 min-h-0">
                 <CodeChatInterface 
                   onSendMessage={handleSendMessage}
                   className="h-full border-0 rounded-none"

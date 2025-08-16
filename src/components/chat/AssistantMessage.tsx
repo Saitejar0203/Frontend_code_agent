@@ -8,8 +8,10 @@ interface AssistantMessageProps {
 
 export const AssistantMessage = memo(({ content, isStreaming = false }: AssistantMessageProps) => {
   return (
-    <div className="overflow-hidden w-full">
-      <Markdown>{content}</Markdown>
+    <div className="w-full">
+      <div className="text-gray-800 dark:text-gray-200">
+        <Markdown>{content}</Markdown>
+      </div>
       {isStreaming && (
         <div className="flex items-center space-x-1 mt-2">
           <div className="w-2 h-2 bg-blue-500 rounded-full animate-bounce"></div>

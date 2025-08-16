@@ -57,7 +57,7 @@ export function isNullResponse(content: string | null | undefined): boolean {
  * Maximum number of validation iterations allowed
  * This prevents infinite validation loops
  */
-export const MAX_VALIDATION_ITERATIONS = 3;
+export const MAX_VALIDATION_ITERATIONS = 1;
 
 /**
  * Validation prompt to send when checking code quality and completeness
