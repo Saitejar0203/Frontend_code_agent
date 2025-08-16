@@ -211,6 +211,73 @@ export class PreviewManager {
     return DEV_SERVER_PORTS.includes(port) || (port >= 3000 && port <= 9999);
   }
 
+  // Wait for a specific port to become ready
+  public waitForPort(port: number, options: { timeout?: number } = {}): Promise<string> {
+    const timeout = options.timeout || 15000; // Default 15 seconds
+    
+    return new Promise((resolve, reject) => {
+      // Check if port is already ready
+      const existingPreview = this.availablePreviews.get(port);
+      if (existingPreview && existingPreview.ready) {
+        resolve(existingPreview.url);
+        return;
+      }
+      
+      let timeoutId: NodeJS.Timeout;
+      let portListener: (portNum: number, type: 'open' | 'close', url: string) => void;
+      let serverReadyListener: (portNum: number, url: string) => void;
+      
+      const cleanup = () => {
+        if (timeoutId) clearTimeout(timeoutId);
+        if (this.webcontainer && portListener) {
+          this.webcontainer.off('port', portListener);
+        }
+        if (this.webcontainer && serverReadyListener) {
+          this.webcontainer.off('server-ready', serverReadyListener);
+        }
+      };
+      
+      // Set up timeout
+      timeoutId = setTimeout(() => {
+        cleanup();
+        reject(new Error(`Timeout waiting for port ${port} to be ready after ${timeout}ms`));
+      }, timeout);
+      
+      // Listen for port events
+      portListener = (portNum: number, type: 'open' | 'close', url: string) => {
+        if (portNum === port && type === 'open') {
+          cleanup();
+          resolve(url);
+        }
+      };
+      
+      // Listen for server-ready events
+      serverReadyListener = (portNum: number, url: string) => {
+        if (portNum === port) {
+          cleanup();
+          resolve(url);
+        }
+      };
+      
+      // Add listeners if webcontainer is ready
+      if (this.webcontainer) {
+        this.webcontainer.on('port', portListener);
+        this.webcontainer.on('server-ready', serverReadyListener);
+      } else {
+        // Wait for webcontainer to be ready, then add listeners
+        this.webcontainerPromise.then((container) => {
+          if (timeoutId) { // Only add listeners if not timed out
+            container.on('port', portListener);
+            container.on('server-ready', serverReadyListener);
+          }
+        }).catch((error) => {
+          cleanup();
+          reject(new Error(`Failed to initialize WebContainer: ${error.message}`));
+        });
+      }
+    });
+  }
+
   // Get current previews
   public getPreviews(): PreviewInfo[] {
     return Array.from(this.availablePreviews.values());

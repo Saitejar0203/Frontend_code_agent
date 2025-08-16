@@ -11,6 +11,7 @@ import {
   type FileNode
 } from '@/lib/stores/workbenchStore';
 import { addFileModification } from '@/lib/stores/chatStore';
+import { actionStatusStore, addActionStatus } from '@/lib/stores/actionStatusStore';
 import { FileSystemTree, WebContainer } from '@webcontainer/api';
 import { getPreviewManager } from '@/lib/preview/PreviewManager';
 import { type BoltAction } from './types';
@@ -153,9 +154,9 @@ class ActionRunner {
 
     // Add action to the actions map for tracking
     const abortController = new AbortController();
-    this.actions.set(actionId, {
+    const actionState = {
       ...action,
-      status: 'pending',
+      status: 'pending' as const,
       executed: false,
       abort: () => {
         abortController.abort();
@@ -165,7 +166,11 @@ class ActionRunner {
         }
       },
       abortSignal: abortController.signal,
-    });
+    };
+    this.actions.set(actionId, actionState);
+    
+    // Add to the reactive store for UI tracking
+    addActionStatus(actionId, actionState);
 
     // Trigger the processing loop, but don't wait for it
     this.processQueues();
@@ -548,6 +553,39 @@ class ActionRunner {
     return serverReadyPatterns.some(pattern => pattern.test(output));
   }
 
+  /**
+   * Extract port number from command string
+   */
+  private extractPortFromCommand(commandString: string): number | null {
+    // Look for port specifications in common formats
+    const portPatterns = [
+      /--port[\s=](\d+)/i,
+      /-p[\s=](\d+)/i,
+      /port[\s=](\d+)/i,
+      /:([0-9]{4,5})\b/,
+      /localhost:(\d+)/i
+    ];
+    
+    for (const pattern of portPatterns) {
+      const match = commandString.match(pattern);
+      if (match && match[1]) {
+        const port = parseInt(match[1], 10);
+        if (port > 0 && port < 65536) {
+          return port;
+        }
+      }
+    }
+    
+    // Default ports for common frameworks
+    if (commandString.includes('vite')) return 5173;
+    if (commandString.includes('next')) return 3000;
+    if (commandString.includes('react')) return 3000;
+    if (commandString.includes('angular')) return 4200;
+    if (commandString.includes('vue')) return 8080;
+    
+    return null;
+  }
+
   private async runShellAction(action: ActionState) {
     if (action.type !== 'shell') {
       this.logger.error('Expected shell action');
@@ -636,15 +674,29 @@ class ActionRunner {
       );
 
       if (isDevServer) {
-        // For dev servers, wait a bit for startup, then return if server is ready
-        await new Promise(resolve => setTimeout(resolve, 3000));
-        
-        if (serverReady && !action.abortSignal.aborted) {
-          this.logger.info(`Development server started successfully: ${commandString}`);
-          return; // Don't wait for exit
+        // For dev servers, use PreviewManager to wait for port ready signal
+        try {
+          const port = this.extractPortFromCommand(commandString) || 3000; // Default to 3000
+          const previewManager = getPreviewManager();
+          
+          if (previewManager) {
+            this.logger.info(`Waiting for development server on port ${port}...`);
+            const url = await previewManager.waitForPort(port, { timeout: 15000 });
+            
+            if (!action.abortSignal.aborted) {
+              this.logger.info(`✅ Development server ready at ${url}`);
+              appendTerminalOutput(`\n✅ Development server ready at ${url}\n`);
+              return; // Don't wait for exit
+            }
+          } else {
+            this.logger.warn('PreviewManager not available, falling back to timeout');
+            // Fallback to original timeout logic
+            await new Promise(resolve => setTimeout(resolve, 3000));
+          }
+        } catch (error) {
+          this.logger.warn(`Failed to wait for port ready signal: ${error instanceof Error ? error.message : 'Unknown error'}`);
+          // Continue with normal flow if port waiting fails
         }
-        
-        // If server didn't start in 3 seconds, continue with normal flow
       }
 
       const exitCode = await process.exit;
@@ -807,7 +859,11 @@ class ActionRunner {
   private updateAction(id: string, newState: ActionStateUpdate) {
     const action = this.actions.get(id);
     if (action) {
-      this.actions.set(id, { ...action, ...newState });
+      const updatedAction = { ...action, ...newState };
+      this.actions.set(id, updatedAction);
+      
+      // Update the global reactive store
+      actionStatusStore.setKey(id, updatedAction);
     }
   }
 

@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { useStore } from '@nanostores/react';
 import { workbenchStore, selectArtifact, removeArtifact } from '../lib/stores/workbenchStore';
+import { actionStatusStore } from '../lib/stores/actionStatusStore';
 import type { ArtifactState } from '../lib/stores/workbenchStore';
 import type { BoltAction } from '../lib/runtime/types';
 import { useWebContainer } from '@/components/WebContainer/WebContainerProvider';
@@ -24,8 +25,8 @@ interface ArtifactProps {
 
 export function Artifact({ className = '' }: ArtifactProps) {
   const { artifacts, selectedArtifactId } = useStore(workbenchStore);
+  const allActionStatuses = useStore(actionStatusStore);
   const { actionRunner } = useWebContainer();
-  const [actionStatuses, setActionStatuses] = useState<Map<string, any>>(new Map());
   const actionsContainerRef = useRef<HTMLDivElement>(null);
   
   const artifactList = Object.values(artifacts);
@@ -34,11 +35,9 @@ export function Artifact({ className = '' }: ArtifactProps) {
   // Auto-scroll to running actions
   const scrollToRunningAction = () => {
     if (actionsContainerRef.current && selectedArtifact) {
-      const runningActions = selectedArtifact.actions.filter((action, index) => {
-        const actionKey = `${action.type}_${action.filePath || action.content}`;
-        const status = actionStatuses.get(actionKey);
-        return status && status.status === 'running';
-      });
+      const runningActions = Object.values(allActionStatuses).filter(status => 
+        status && status.status === 'running'
+      );
       
       if (runningActions.length > 0) {
         // Scroll to top to show the latest running action (since order is reversed)
@@ -47,27 +46,10 @@ export function Artifact({ className = '' }: ArtifactProps) {
     }
   };
 
-  // Poll for action status updates
+  // Auto-scroll when action statuses change
   useEffect(() => {
-    if (!actionRunner || !selectedArtifact) {
-      return;
-    }
-
-    const interval = setInterval(() => {
-      const allActionStatuses = actionRunner.getAllActionStatuses();
-      const statusMap = new Map<string, any>();
-      
-      // Create a map of action statuses keyed by action signature
-      allActionStatuses.forEach(actionState => {
-        const actionKey = `${actionState.type}_${actionState.filePath || actionState.content}`;
-        statusMap.set(actionKey, actionState);
-      });
-      
-      setActionStatuses(statusMap);
-    }, 500);
-    
-    return () => clearInterval(interval);
-  }, [actionRunner, selectedArtifact]);
+    scrollToRunningAction();
+  }, [allActionStatuses, selectedArtifact]);
 
   if (artifactList.length === 0) {
     return (
@@ -121,8 +103,19 @@ export function Artifact({ className = '' }: ArtifactProps) {
       <div ref={actionsContainerRef} className="flex-1 overflow-y-auto p-3">
         <div className="space-y-2">
           {displayArtifact.actions.slice().reverse().map((action, index) => {
-            const actionKey = `${action.type}_${action.filePath || action.content}`;
-            const actionStatus = actionStatuses.get(actionKey);
+            // Find matching action status by comparing action properties
+            const actionStatus = Object.values(allActionStatuses).find(status => {
+              if (!status) return false;
+              
+              // Match by type and content/filePath
+              const typeMatch = status.type === action.type;
+              const contentMatch = action.type === 'file' 
+                ? status.filePath === action.filePath
+                : status.content === action.content;
+              
+              return typeMatch && contentMatch;
+            });
+            
             return (
               <ActionItem 
                 key={index} 
