@@ -2,15 +2,23 @@ import React, { useState, useRef, useEffect } from 'react';
 import { Send, Paperclip, Search, Lightbulb, Loader2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Textarea } from '@/components/ui/textarea';
+import { cn } from '@/lib/utils';
+import { ImageAttachment } from '@/lib/stores/chatStore';
+import ImagePreviewList from './ImagePreviewList';
+import CompactImageThumbnail from './CompactImageThumbnail';
+import FileInputHandler from './FileInputHandler';
 
 interface EnhancedChatInputProps {
   value: string;
   onChange: (value: string) => void;
-  onSend: () => void;
+  onSend: (images?: ImageAttachment[]) => void;
   disabled?: boolean;
   className?: string;
   showPlaceholder?: boolean;
   showSuggestIdea?: boolean;
+  images?: ImageAttachment[];
+  onImagesChange?: (images: ImageAttachment[]) => void;
+  maxImages?: number;
 }
 
 const PLACEHOLDER_SUGGESTIONS = [
@@ -26,12 +34,21 @@ const EnhancedChatInput: React.FC<EnhancedChatInputProps> = ({
   disabled = false,
   className = "",
   showPlaceholder = false,
-  showSuggestIdea = false
+  showSuggestIdea = false,
+  images = [],
+  onImagesChange,
+  maxImages = 5
 }) => {
   const [currentPlaceholderIndex, setCurrentPlaceholderIndex] = useState(0);
   const [isPlaceholderVisible, setIsPlaceholderVisible] = useState(true);
   const [isHovered, setIsHovered] = useState(false);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  
+  // Internal image state if not controlled
+  const [internalImages, setInternalImages] = useState<ImageAttachment[]>([]);
+  const currentImages = onImagesChange ? images : internalImages;
+  const setCurrentImages = onImagesChange || setInternalImages;
 
   // Animated placeholder rotation
   useEffect(() => {
@@ -71,16 +88,31 @@ const EnhancedChatInput: React.FC<EnhancedChatInputProps> = ({
       } else {
         // Enter: Send message
         e.preventDefault();
-        if (value.trim() && !disabled) {
-          onSend();
+        if ((value.trim() || currentImages.length > 0) && !disabled) {
+          onSend(currentImages.length > 0 ? currentImages : undefined);
         }
       }
     }
   };
 
   const handleAttachImage = () => {
-    // TODO: Implement image attachment
-    console.log('Attach image clicked');
+    fileInputRef.current?.click();
+  };
+  
+  const handleFilesSelected = (files: ImageAttachment[]) => {
+    setCurrentImages([...currentImages, ...files]);
+  };
+  
+  const handleRemoveImage = (imageId: string) => {
+    setCurrentImages(currentImages.filter(img => img.id !== imageId));
+  };
+  
+
+  
+  const handleImageUpdate = (imageId: string, updates: Partial<ImageAttachment>) => {
+    setCurrentImages(currentImages.map(img => 
+      img.id === imageId ? { ...img, ...updates } : img
+    ));
   };
 
   const handleSearchWeb = () => {
@@ -104,6 +136,21 @@ const EnhancedChatInput: React.FC<EnhancedChatInputProps> = ({
           
           {/* Textarea container */}
           <div className="relative p-4 pb-2">
+            {/* Compact Image Thumbnails - Inside input at top */}
+            {currentImages.length > 0 && (
+              <div className="flex flex-wrap gap-2 mb-3 pb-2 border-b border-gray-100">
+                {currentImages.map((image) => (
+                  <CompactImageThumbnail
+                    key={image.id}
+                    image={image}
+                    onRemove={handleRemoveImage}
+                  />
+                ))}
+                <span className="text-xs text-gray-500 self-center ml-2">
+                  {currentImages.length} image{currentImages.length > 1 ? 's' : ''}
+                </span>
+              </div>
+            )}
             <Textarea
               ref={textareaRef}
               value={value}
@@ -113,12 +160,15 @@ const EnhancedChatInput: React.FC<EnhancedChatInputProps> = ({
               onMouseLeave={() => setIsHovered(false)}
               disabled={disabled}
               placeholder="" // We'll handle placeholder manually
-              className="w-full min-h-[48px] max-h-[192px] resize-none border-0 bg-transparent focus:ring-0 focus:border-0 focus-visible:ring-0 focus-visible:ring-offset-0 text-base leading-6 placeholder:text-transparent scrollbar-thin scrollbar-thumb-gray-300 scrollbar-track-transparent hover:scrollbar-thumb-gray-400 focus:outline-none"
+              className={cn(
+                "w-full min-h-[48px] max-h-[192px] resize-none border-0 bg-transparent focus:ring-0 focus:border-0 focus-visible:ring-0 focus-visible:ring-offset-0 text-base leading-6 placeholder:text-transparent scrollbar-thin scrollbar-thumb-gray-300 scrollbar-track-transparent hover:scrollbar-thumb-gray-400 focus:outline-none",
+                currentImages.length > 0 ? "pt-0" : "pt-0"
+              )}
               style={{ lineHeight: '24px' }}
             />
             
             {/* Custom animated placeholder */}
-            {showPlaceholder && !value && !isHovered && (
+            {showPlaceholder && !value && !isHovered && currentImages.length === 0 && (
               <div className="absolute top-4 left-4 pointer-events-none">
                 <span 
                   className={`text-gray-500 text-base transition-opacity duration-300 ${
@@ -129,6 +179,8 @@ const EnhancedChatInput: React.FC<EnhancedChatInputProps> = ({
                 </span>
               </div>
             )}
+            
+
           </div>
 
           {/* Action buttons row */}
@@ -178,8 +230,8 @@ const EnhancedChatInput: React.FC<EnhancedChatInputProps> = ({
 
             {/* Right side - Send/Loader button */}
             <Button
-              onClick={disabled ? undefined : onSend}
-              disabled={disabled || !value.trim()}
+              onClick={disabled ? undefined : () => onSend(currentImages.length > 0 ? currentImages : undefined)}
+              disabled={disabled || (!value.trim() && currentImages.length === 0)}
               className="h-10 w-10 p-0 bg-gradient-to-r from-emerald-600 to-emerald-700 hover:from-emerald-700 hover:to-emerald-800 disabled:from-gray-300 disabled:to-gray-400 text-white rounded-xl shadow-lg hover:shadow-xl disabled:shadow-sm transition-all duration-200 disabled:cursor-not-allowed group"
             >
               {disabled ? (
@@ -190,8 +242,14 @@ const EnhancedChatInput: React.FC<EnhancedChatInputProps> = ({
             </Button>
           </div>
         </div>
-
-
+        
+        {/* Hidden File Input Handler */}
+        <FileInputHandler
+          ref={fileInputRef}
+          onFilesSelected={handleFilesSelected}
+          maxFiles={maxImages - currentImages.length}
+          disabled={disabled}
+        />
       </div>
     </div>
   );

@@ -1,5 +1,15 @@
 import { map } from 'nanostores';
 
+export interface ImageAttachment {
+  id: string;
+  file: File;
+  preview: string;
+  uploadStatus: 'pending' | 'uploading' | 'completed' | 'error';
+  uploadProgress?: number;
+  error?: string;
+  url?: string; // URL after successful upload
+}
+
 export interface Message {
   id: string;
   content: string; // Processed content for display
@@ -8,6 +18,7 @@ export interface Message {
   timestamp: Date;
   type?: 'text' | 'artifact';
   isStreaming?: boolean;
+  images?: ImageAttachment[]; // Image attachments
 }
 
 export interface ConversationEntry {
@@ -186,4 +197,40 @@ export function clearUIMessages() {
   chatStore.setKey('error', null);
   chatStore.setKey('isGenerating', false);
   chatStore.setKey('isThinking', false);
+}
+
+// Image attachment management
+export function addMessageWithImages(content: string, images?: ImageAttachment[]) {
+  const message: Message = {
+    id: `msg-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
+    content,
+    sender: 'user',
+    timestamp: new Date(),
+    type: 'text',
+    images: images || []
+  };
+  addMessage(message);
+  return message;
+}
+
+export function updateMessageImages(messageId: string, images: ImageAttachment[]) {
+  const currentMessages = chatStore.get().messages;
+  const updatedMessages = currentMessages.map(message => 
+    message.id === messageId ? { ...message, images } : message
+  );
+  chatStore.setKey('messages', updatedMessages);
+}
+
+export function updateImageInMessage(messageId: string, imageId: string, updates: Partial<ImageAttachment>) {
+  const currentMessages = chatStore.get().messages;
+  const updatedMessages = currentMessages.map(message => {
+    if (message.id === messageId && message.images) {
+      const updatedImages = message.images.map(img => 
+        img.id === imageId ? { ...img, ...updates } : img
+      );
+      return { ...message, images: updatedImages };
+    }
+    return message;
+  });
+  chatStore.setKey('messages', updatedMessages);
 }
