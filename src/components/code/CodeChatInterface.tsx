@@ -16,6 +16,7 @@ import { AssistantMessage } from '../chat/AssistantMessage';
 import { UserMessage } from '../chat/UserMessage';
 import { ThinkingAnimation } from '../chat/ThinkingAnimation';
 import { AssistantStatusIndicator } from '../chat/AssistantStatusIndicator';
+import { ImageGenerationStatusIndicator } from '../chat/ImageGenerationStatusIndicator';
 import { stopQueuedMessages, hasQueuedMessages } from '@/services/codeAgentService';
 
 interface CodeChatInterfaceProps {
@@ -113,9 +114,12 @@ const CodeChatInterface: React.FC<CodeChatInterfaceProps> = ({
                   // Assistant message - left aligned without background
                   <div className="px-4 py-2">
                     <div className="flex flex-col w-full min-w-0">
-                      {/* Show status indicator above first assistant message or when streaming */}
+                      {/* Show status indicators above first assistant message or when streaming */}
                       {(index === 0 || message.isStreaming) && (
-                        <AssistantStatusIndicator className="mb-2" />
+                        <>
+                          <AssistantStatusIndicator className="mb-2" />
+                          <ImageGenerationStatusIndicator />
+                        </>
                       )}
                       <AssistantMessage 
                         content={message.content} 
@@ -137,6 +141,7 @@ const CodeChatInterface: React.FC<CodeChatInterfaceProps> = ({
             <div className="px-4 py-2">
               <div className="flex flex-col w-full min-w-0">
                 <AssistantStatusIndicator />
+                <ImageGenerationStatusIndicator />
               </div>
             </div>
           </div>

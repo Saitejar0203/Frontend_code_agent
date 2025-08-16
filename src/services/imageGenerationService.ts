@@ -2,6 +2,7 @@ import { createScopedLogger } from '../lib/utils/logger';
 
 const logger = createScopedLogger('ImageGenerationService');
 import { addFileModification } from '../lib/stores/chatStore';
+import { startImageGeneration, completeImageGeneration } from '../lib/stores/imageGenerationStore';
 import type { WebContainer } from '@webcontainer/api';
 import type { ActionRunner } from '../lib/runtime/ActionRunner';
 
@@ -43,6 +44,8 @@ class ImageGenerationService {
       return;
     }
 
+    // Update store to indicate image generation has started
+    startImageGeneration(requests.length);
     logger.info(`[ImageGenerationService] Starting generation of ${requests.length} images`);
 
     try {
@@ -60,6 +63,9 @@ class ImageGenerationService {
 
       const batchResult: BatchImageGenerationResponse = await response.json();
       logger.info(`[ImageGenerationService] Batch generation completed: ${batchResult.successful}/${batchResult.total_requested} successful`);
+      
+      // Update store to indicate image generation has completed
+      completeImageGeneration();
 
       // Process successful generations
       const successfulResults = batchResult.results.filter(result => result.success && result.image_base64);
