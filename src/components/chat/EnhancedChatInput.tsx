@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { Send, Paperclip, Search, Lightbulb } from 'lucide-react';
+import { Send, Paperclip, Search, Lightbulb, Loader2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Textarea } from '@/components/ui/textarea';
 
@@ -9,6 +9,8 @@ interface EnhancedChatInputProps {
   onSend: () => void;
   disabled?: boolean;
   className?: string;
+  showPlaceholder?: boolean;
+  showSuggestIdea?: boolean;
 }
 
 const PLACEHOLDER_SUGGESTIONS = [
@@ -22,7 +24,9 @@ const EnhancedChatInput: React.FC<EnhancedChatInputProps> = ({
   onChange,
   onSend,
   disabled = false,
-  className = ""
+  className = "",
+  showPlaceholder = false,
+  showSuggestIdea = false
 }) => {
   const [currentPlaceholderIndex, setCurrentPlaceholderIndex] = useState(0);
   const [isPlaceholderVisible, setIsPlaceholderVisible] = useState(true);
@@ -31,7 +35,7 @@ const EnhancedChatInput: React.FC<EnhancedChatInputProps> = ({
 
   // Animated placeholder rotation
   useEffect(() => {
-    if (value || isHovered) {
+    if (!showPlaceholder || value || isHovered) {
       setIsPlaceholderVisible(false);
       return;
     }
@@ -46,7 +50,7 @@ const EnhancedChatInput: React.FC<EnhancedChatInputProps> = ({
     }, 3000); // Change every 3 seconds
 
     return () => clearInterval(interval);
-  }, [value, isHovered]);
+  }, [value, isHovered, showPlaceholder]);
 
   // Auto-resize textarea
   useEffect(() => {
@@ -114,7 +118,7 @@ const EnhancedChatInput: React.FC<EnhancedChatInputProps> = ({
             />
             
             {/* Custom animated placeholder */}
-            {!value && !isHovered && (
+            {showPlaceholder && !value && !isHovered && (
               <div className="absolute top-4 left-4 pointer-events-none">
                 <span 
                   className={`text-gray-500 text-base transition-opacity duration-300 ${
@@ -156,35 +160,38 @@ const EnhancedChatInput: React.FC<EnhancedChatInputProps> = ({
                 Search web
               </Button>
               
-              <Button
-                type="button"
-                variant="ghost"
-                size="sm"
-                onClick={handleSuggestIdea}
-                disabled={disabled}
-                className="h-8 px-3 text-gray-500 hover:text-purple-600 hover:bg-purple-50 rounded-lg transition-all duration-200 text-xs font-medium"
-                title="Suggest me an idea"
-              >
-                <Lightbulb className="w-3 h-3 mr-1" />
-                Suggest me an idea
-              </Button>
+              {showSuggestIdea && (
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  onClick={handleSuggestIdea}
+                  disabled={disabled}
+                  className="h-8 px-3 text-gray-500 hover:text-purple-600 hover:bg-purple-50 rounded-lg transition-all duration-200 text-xs font-medium"
+                  title="Suggest me an idea"
+                >
+                  <Lightbulb className="w-3 h-3 mr-1" />
+                  Suggest me an idea
+                </Button>
+              )}
             </div>
 
-            {/* Right side - Send button */}
+            {/* Right side - Send/Loader button */}
             <Button
-              onClick={onSend}
-              disabled={!value.trim() || disabled}
+              onClick={disabled ? undefined : onSend}
+              disabled={disabled || !value.trim()}
               className="h-10 w-10 p-0 bg-gradient-to-r from-emerald-600 to-emerald-700 hover:from-emerald-700 hover:to-emerald-800 disabled:from-gray-300 disabled:to-gray-400 text-white rounded-xl shadow-lg hover:shadow-xl disabled:shadow-sm transition-all duration-200 disabled:cursor-not-allowed group"
             >
-              <Send className="w-5 h-5 transform group-hover:translate-x-0.5 transition-transform duration-200" />
+              {disabled ? (
+                <Loader2 className="w-5 h-5 animate-spin" />
+              ) : (
+                <Send className="w-5 h-5 transform group-hover:translate-x-0.5 transition-transform duration-200" />
+              )}
             </Button>
           </div>
         </div>
 
-        {/* Subtle hint text */}
-        <div className="mt-2 text-xs text-gray-400 text-center">
-          Start by describing what you'd like to build or code you need help with
-        </div>
+
       </div>
     </div>
   );

@@ -28,7 +28,7 @@ const CodeChatInterface: React.FC<CodeChatInterfaceProps> = ({
   onSendMessage,
   className
 }) => {
-  const { messages, isGenerating, isThinking, error } = useStore(chatStore);
+  const { messages, isGenerating, isThinking, error, assistantStatus } = useStore(chatStore);
   const [input, setInput] = useState('');
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
@@ -43,8 +43,8 @@ const CodeChatInterface: React.FC<CodeChatInterfaceProps> = ({
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     console.log('🎯 CodeChatInterface handleSubmit called with input:', input);
-    if (!input.trim() || isGenerating || hasQueuedMessages()) {
-      console.log('❌ Input validation failed, already generating, or has queued messages');
+    if (!input.trim() || isGenerating || hasQueuedMessages() || assistantStatus === 'validation') {
+      console.log('❌ Input validation failed, already generating, has queued messages, or validation in progress');
       return;
     }
     
@@ -155,28 +155,12 @@ const CodeChatInterface: React.FC<CodeChatInterfaceProps> = ({
       </div>
 
       {/* Enhanced Input Area */}
-      {(isGenerating || hasQueuedMessages()) ? (
-        <div className="flex-shrink-0 border-t border-gray-200 dark:border-gray-700 bg-white p-4">
-          <div className="flex items-center justify-center gap-3">
-            <div className="text-gray-600 dark:text-gray-400">AI is thinking...</div>
-            <button
-              type="button"
-              onClick={handleStop}
-              className="px-4 py-2 bg-red-500 text-white rounded-md hover:bg-red-600 transition-colors flex items-center gap-2"
-            >
-              <StopCircle className="w-4 h-4" />
-              Stop
-            </button>
-          </div>
-        </div>
-      ) : (
-        <EnhancedChatInput
-          value={input}
-          onChange={setInput}
-          onSend={() => handleSubmit(new Event('submit') as any)}
-          disabled={isGenerating || hasQueuedMessages()}
-        />
-      )}
+      <EnhancedChatInput
+        value={input}
+        onChange={setInput}
+        onSend={() => handleSubmit(new Event('submit') as any)}
+        disabled={isGenerating || hasQueuedMessages() || assistantStatus === 'validation'}
+      />
     </div>
   );
 };

@@ -201,6 +201,8 @@ const CodeAgentChatInner: React.FC = () => {
                   onSend={handleSubmit}
                   disabled={false}
                   className="bg-white rounded-2xl shadow-xl border-0 relative z-20"
+                  showPlaceholder={true}
+                  showSuggestIdea={true}
                 />
               </div>
               
