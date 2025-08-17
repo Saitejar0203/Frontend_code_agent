@@ -19,6 +19,7 @@ interface EnhancedChatInputProps {
   images?: ImageAttachment[];
   onImagesChange?: (images: ImageAttachment[]) => void;
   maxImages?: number;
+  clearImages?: boolean;
 }
 
 const PLACEHOLDER_SUGGESTIONS = [
@@ -37,7 +38,8 @@ const EnhancedChatInput: React.FC<EnhancedChatInputProps> = ({
   showSuggestIdea = false,
   images = [],
   onImagesChange,
-  maxImages = 5
+  maxImages = 5,
+  clearImages: shouldClearImages = false
 }) => {
   const [currentPlaceholderIndex, setCurrentPlaceholderIndex] = useState(0);
   const [isPlaceholderVisible, setIsPlaceholderVisible] = useState(true);
@@ -80,6 +82,25 @@ const EnhancedChatInput: React.FC<EnhancedChatInputProps> = ({
     }
   }, [value]);
 
+  // Clear images when clearImages prop is true
+  useEffect(() => {
+    if (shouldClearImages) {
+      clearImages();
+    }
+  }, [shouldClearImages]);
+
+  const clearImages = () => {
+    setCurrentImages([]);
+  };
+
+  const handleSend = () => {
+    if ((value.trim() || currentImages.length > 0) && !disabled) {
+      onSend(currentImages.length > 0 ? currentImages : undefined);
+      // Clear images after sending
+      clearImages();
+    }
+  };
+
   const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
     if (e.key === 'Enter') {
       if (e.shiftKey) {
@@ -88,9 +109,7 @@ const EnhancedChatInput: React.FC<EnhancedChatInputProps> = ({
       } else {
         // Enter: Send message
         e.preventDefault();
-        if ((value.trim() || currentImages.length > 0) && !disabled) {
-          onSend(currentImages.length > 0 ? currentImages : undefined);
-        }
+        handleSend();
       }
     }
   };
@@ -230,7 +249,7 @@ const EnhancedChatInput: React.FC<EnhancedChatInputProps> = ({
 
             {/* Right side - Send/Loader button */}
             <Button
-              onClick={disabled ? undefined : () => onSend(currentImages.length > 0 ? currentImages : undefined)}
+              onClick={disabled ? undefined : handleSend}
               disabled={disabled || (!value.trim() && currentImages.length === 0)}
               className="h-10 w-10 p-0 bg-gradient-to-r from-emerald-600 to-emerald-700 hover:from-emerald-700 hover:to-emerald-800 disabled:from-gray-300 disabled:to-gray-400 text-white rounded-xl shadow-lg hover:shadow-xl disabled:shadow-sm transition-all duration-200 disabled:cursor-not-allowed group"
             >

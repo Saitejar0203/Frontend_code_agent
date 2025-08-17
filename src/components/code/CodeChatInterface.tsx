@@ -31,6 +31,7 @@ const CodeChatInterface: React.FC<CodeChatInterfaceProps> = ({
 }) => {
   const { messages, isGenerating, isThinking, error, assistantStatus } = useStore(chatStore);
   const [input, setInput] = useState('');
+  const [shouldClearImages, setShouldClearImages] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
   const scrollToBottom = () => {
@@ -79,6 +80,10 @@ const CodeChatInterface: React.FC<CodeChatInterfaceProps> = ({
   const handleClear = () => {
     clearMessages();
     setError(null);
+    // Trigger image clearing in EnhancedChatInput
+    setShouldClearImages(true);
+    // Reset the flag after a brief delay
+    setTimeout(() => setShouldClearImages(false), 100);
   };
 
   return (
@@ -105,7 +110,7 @@ const CodeChatInterface: React.FC<CodeChatInterfaceProps> = ({
                   // User message - right aligned with bubble
                   <div className="flex justify-end px-4 py-2">
                     <div className="flex flex-col items-end max-w-[80%]">
-                      <UserMessage content={message.content} />
+                      <UserMessage content={message.content} images={message.images} />
                       <div className="text-xs text-gray-500 dark:text-gray-400 mt-1 mr-2">
                         {message.timestamp.toLocaleTimeString()}
                       </div>
@@ -161,6 +166,7 @@ const CodeChatInterface: React.FC<CodeChatInterfaceProps> = ({
         onChange={setInput}
         onSend={(images) => handleSubmit(new Event('submit') as any, images)}
         disabled={isGenerating || hasQueuedMessages() || assistantStatus === 'validation'}
+        clearImages={shouldClearImages}
       />
     </div>
   );

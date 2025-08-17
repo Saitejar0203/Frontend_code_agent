@@ -1,7 +1,7 @@
 // frontend/src/services/codeAgentService.ts
 import { StreamingMessageParser, ParserCallbacks } from '@/lib/runtime/StreamingMessageParser';
 import { ActionRunner } from '@/lib/runtime/ActionRunner';
-import { addMessage, updateMessage, setGenerating, setThinking, addToConversationHistory, buildConversationHistory, setAssistantStatus, setStatusMessage, clearAssistantStatus, completeAssistantStatus, type Message, type ImageAttachment } from '@/lib/stores/chatStore';
+import { addMessage, addMessageWithImages, updateMessage, setGenerating, setThinking, addToConversationHistory, buildConversationHistory, setAssistantStatus, setStatusMessage, clearAssistantStatus, completeAssistantStatus, type Message, type ImageAttachment } from '@/lib/stores/chatStore';
 import { chatStore } from '@/lib/stores/chatStore';
 import { addArtifact, addArtifactAndPrepareExecution, addActionToArtifact, addOrUpdateFileFromAction, resetWorkbenchForNewConversation, workbenchStore } from '@/lib/stores/workbenchStore';
 import { WebContainer } from '@webcontainer/api';
@@ -205,16 +205,21 @@ async function sendChatMessageInternal(userInput: string, webcontainer: WebConta
   
   // Only add user message if not coming from queue (to avoid duplication)
   if (!fromQueue) {
-    // Add user message to chat store
+    // Add user message to chat store with images if present
     const userMessage: Message = {
       id: Date.now().toString(),
       content: userInput,
       sender: 'user',
-      timestamp: new Date()
+      timestamp: new Date(),
+      images: images && images.length > 0 ? images : undefined
     };
     
     console.log('📝 Adding user message to store:', userMessage);
-    addMessage(userMessage);
+    if (images && images.length > 0) {
+      addMessageWithImages(userInput, images);
+    } else {
+      addMessage(userMessage);
+    }
     
     // Add user message to conversation history
     addToConversationHistory('user', userInput);
