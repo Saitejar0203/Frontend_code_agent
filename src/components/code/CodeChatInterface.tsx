@@ -10,7 +10,8 @@ import {
   setGenerating, 
   setError,
   clearMessages,
-  type Message 
+  type Message,
+  type ImageAttachment 
 } from '@/lib/stores/chatStore';
 import { AssistantMessage } from '../chat/AssistantMessage';
 import { UserMessage } from '../chat/UserMessage';
@@ -20,7 +21,7 @@ import { ImageGenerationStatusIndicator } from '../chat/ImageGenerationStatusInd
 import { stopQueuedMessages, hasQueuedMessages } from '@/services/codeAgentService';
 
 interface CodeChatInterfaceProps {
-  onSendMessage?: (message: string) => void;
+  onSendMessage?: (message: string, images?: ImageAttachment[]) => void;
   className?: string;
 }
 
@@ -40,16 +41,16 @@ const CodeChatInterface: React.FC<CodeChatInterfaceProps> = ({
     scrollToBottom();
   }, [messages]);
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = (e: React.FormEvent, images?: ImageAttachment[]) => {
     e.preventDefault();
-    console.log('🎯 CodeChatInterface handleSubmit called with input:', input);
+    console.log('🎯 CodeChatInterface handleSubmit called with input:', input, 'images:', images?.length || 0);
     if (!input.trim() || isGenerating || hasQueuedMessages() || assistantStatus === 'validation') {
       console.log('❌ Input validation failed, already generating, has queued messages, or validation in progress');
       return;
     }
     
-    console.log('📞 Calling onSendMessage with:', input);
-    onSendMessage?.(input);
+    console.log('📞 Calling onSendMessage with:', input, 'and', images?.length || 0, 'images');
+    onSendMessage?.(input, images);
     setInput('');
     console.log('✅ Input cleared');
   };
@@ -158,7 +159,7 @@ const CodeChatInterface: React.FC<CodeChatInterfaceProps> = ({
       <EnhancedChatInput
         value={input}
         onChange={setInput}
-        onSend={() => handleSubmit(new Event('submit') as any)}
+        onSend={(images) => handleSubmit(new Event('submit') as any, images)}
         disabled={isGenerating || hasQueuedMessages() || assistantStatus === 'validation'}
       />
     </div>

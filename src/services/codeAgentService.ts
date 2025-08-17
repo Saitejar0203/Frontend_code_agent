@@ -1,7 +1,7 @@
 // frontend/src/services/codeAgentService.ts
 import { StreamingMessageParser, ParserCallbacks } from '@/lib/runtime/StreamingMessageParser';
 import { ActionRunner } from '@/lib/runtime/ActionRunner';
-import { addMessage, updateMessage, setGenerating, setThinking, addToConversationHistory, buildConversationHistory, setAssistantStatus, setStatusMessage, clearAssistantStatus, completeAssistantStatus, type Message } from '@/lib/stores/chatStore';
+import { addMessage, updateMessage, setGenerating, setThinking, addToConversationHistory, buildConversationHistory, setAssistantStatus, setStatusMessage, clearAssistantStatus, completeAssistantStatus, type Message, type ImageAttachment } from '@/lib/stores/chatStore';
 import { chatStore } from '@/lib/stores/chatStore';
 import { addArtifact, addArtifactAndPrepareExecution, addActionToArtifact, addOrUpdateFileFromAction, resetWorkbenchForNewConversation, workbenchStore } from '@/lib/stores/workbenchStore';
 import { WebContainer } from '@webcontainer/api';
@@ -180,9 +180,10 @@ export interface GeminiParserCallbacks extends ParserCallbacks {
 export async function sendChatMessage(
   userInput: string,
   webcontainer?: WebContainer,
-  actionRunner?: ActionRunner
+  actionRunner?: ActionRunner,
+  images?: ImageAttachment[]
 ): Promise<void> {
-  console.log('🚀 sendChatMessage called with input:', userInput);
+  console.log('🚀 sendChatMessage called with input:', userInput, 'images:', images?.length || 0);
   
   // If WebContainer or ActionRunner is not available, queue the message
   if (!webcontainer || !actionRunner) {
@@ -193,13 +194,13 @@ export async function sendChatMessage(
   }
   
   // If both are available, process immediately
-  await sendChatMessageInternal(userInput, webcontainer, actionRunner);
+  await sendChatMessageInternal(userInput, webcontainer, actionRunner, false, images);
 }
 
 /**
  * Internal function for actual message processing
  */
-async function sendChatMessageInternal(userInput: string, webcontainer: WebContainer, actionRunner: ActionRunner, fromQueue: boolean = false): Promise<void> {
+async function sendChatMessageInternal(userInput: string, webcontainer: WebContainer, actionRunner: ActionRunner, fromQueue: boolean = false, images?: ImageAttachment[]): Promise<void> {
   console.log('🚀 sendChatMessageInternal called with input:', userInput, 'fromQueue:', fromQueue);
   
   // Only add user message if not coming from queue (to avoid duplication)
@@ -399,7 +400,9 @@ async function sendChatMessageInternal(userInput: string, webcontainer: WebConta
           onComplete: mightNeedValidation ? undefined : callbacks.onComplete
         };
         
-        const result = await streamAgentResponse(currentPrompt, customCallbacks, conversationHistory, segmentCount);
+        // Only pass images on the first segment of non-validation calls
+        const imagesToSend = (!isValidationCall && segmentCount === 0) ? images : undefined;
+        const result = await streamAgentResponse(currentPrompt, customCallbacks, conversationHistory, segmentCount, imagesToSend);
       console.log('✅ streamAgentResponse completed with response length:', result.fullResponse.length, 'finishReason:', result.finishReason);
       
       // Accumulate the response
@@ -596,11 +599,48 @@ async function performValidationLoop(
   return validationResponse;
 }
 
+/**
+ * Converts ImageAttachment objects to API-compatible format
+ * Extracts base64 data and MIME type from DataURL preview
+ */
+function toImageData(images: ImageAttachment[]): Array<{data: string, mime_type: string, name: string}> {
+  return images.map((image, index) => {
+    try {
+      // Validate image preview format
+      if (!image.preview || !image.preview.startsWith('data:')) {
+        throw new Error(`Invalid image preview format for image ${index + 1}`);
+      }
+      
+      // Extract base64 data and MIME type from DataURL (data:image/jpeg;base64,/9j/4AAQ...)
+      const [header, base64Data] = image.preview.split(',');
+      
+      if (!header || !base64Data) {
+        throw new Error(`Invalid DataURL structure for image ${index + 1}`);
+      }
+      
+      const mimeType = header.match(/data:([^;]+)/)?.[1];
+      if (!mimeType || !mimeType.startsWith('image/')) {
+        throw new Error(`Invalid or missing MIME type for image ${index + 1}`);
+      }
+      
+      return {
+        data: base64Data,
+        mime_type: mimeType,
+        name: image.file.name || `image_${index + 1}`
+      };
+    } catch (error) {
+      console.error(`❌ Error processing image ${index + 1}:`, error);
+      throw error;
+    }
+  });
+}
+
 export async function streamAgentResponse(
   prompt: string, 
   callbacks: GeminiParserCallbacks, 
   conversationHistory: Array<{role: string, content: string}> = [], 
-  segmentCount: number = 0
+  segmentCount: number = 0,
+  images?: ImageAttachment[]
 ): Promise<{ fullResponse: string; finishReason: string | null }> {
   console.log('🔄 streamAgentResponse started with prompt:', prompt, 'segment:', segmentCount);
   const parser = new StreamingMessageParser(callbacks);
@@ -614,11 +654,23 @@ export async function streamAgentResponse(
 
   try {
     const isValidationCall = prompt === VALIDATION_PROMPT;
-    const requestBody = {
+    const requestBody: any = {
       message: prompt,
       conversation_history: conversationHistory,
       stream: true,
     };
+
+    // Add images to request if provided (only for non-validation calls)
+    if (images && images.length > 0 && !isValidationCall) {
+      try {
+        requestBody.images = toImageData(images);
+        console.log('📸 Including', images.length, 'images in request');
+      } catch (error) {
+        console.error('❌ Error processing images:', error);
+        callbacks.onError?.('Failed to process image attachments. Please try again.');
+        return { fullResponse: '', finishReason: 'error' };
+      }
+    }
 
     // Use Gemini 2.5 Pro for validation calls without thinking budget limitation
     if (isValidationCall) {

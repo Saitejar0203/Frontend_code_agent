@@ -13,6 +13,7 @@ import { useStore } from '@nanostores/react';
 import { workbenchStore, setActiveTab } from '@/lib/stores/workbenchStore';
 import { useWebContainer } from '@/components/WebContainer/WebContainerProvider';
 import { sendChatMessage } from '@/services/codeAgentService';
+import { type ImageAttachment } from '@/lib/stores/chatStore';
 import { useTerminalIntegration } from '@/hooks/useTerminalIntegration';
 
 interface WorkbenchLayoutProps {
@@ -89,9 +90,9 @@ export function WorkbenchLayout({ className }: WorkbenchLayoutProps) {
 
   const { webcontainer, actionRunner } = useWebContainer();
 
-  const handleSendMessage = async (message: string) => {
-    console.log('🚀 WorkbenchLayout sending message:', message);
-    await sendChatMessage(message, webcontainer, actionRunner);
+  const handleSendMessage = async (message: string, images?: ImageAttachment[]) => {
+    console.log('🚀 WorkbenchLayout sending message:', message, 'with', images?.length || 0, 'images');
+    await sendChatMessage(message, webcontainer, actionRunner, images);
   };
 
   return (

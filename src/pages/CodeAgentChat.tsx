@@ -10,7 +10,7 @@ import { WebContainerProvider, useWebContainer } from '@/components/WebContainer
 import EnhancedChatInput from '../components/chat/EnhancedChatInput';
 
 import { useStore } from '@nanostores/react';
-import { chatStore, startNewChat, setGenerating, type Message } from '@/lib/stores/chatStore';
+import { chatStore, startNewChat, setGenerating, type Message, type ImageAttachment } from '@/lib/stores/chatStore';
 import { workbenchStore, setFileTree, clearArtifacts, resetWorkbenchForNewConversation } from '@/lib/stores/workbenchStore';
 import { sendChatMessage } from '@/services/codeAgentService';
 
@@ -71,7 +71,7 @@ const CodeAgentChatInner: React.FC = () => {
     }
   };
 
-  const handleSubmit = async (e?: React.FormEvent) => {
+  const handleSubmit = async (images?: ImageAttachment[], e?: React.FormEvent) => {
     if (e) e.preventDefault();
     if (!inputValue.trim()) return;
     
@@ -79,8 +79,9 @@ const CodeAgentChatInner: React.FC = () => {
     setInputValue('');
     setIsInChatMode(true);
     
+    console.log('🚀 CodeAgentChat handleSubmit with', images?.length || 0, 'images');
     // Use the service function to handle all streaming logic
-    await sendChatMessage(userInput, webcontainer, actionRunner);
+    await sendChatMessage(userInput, webcontainer, actionRunner, images);
   };
   
   // All streaming and parsing logic moved to codeAgentService.ts
@@ -198,7 +199,7 @@ const CodeAgentChatInner: React.FC = () => {
                 <EnhancedChatInput
                   value={inputValue}
                   onChange={setInputValue}
-                  onSend={handleSubmit}
+                  onSend={(images) => handleSubmit(images)}
                   disabled={false}
                   className="bg-white rounded-2xl shadow-xl border-0 relative z-20"
                   showPlaceholder={true}
