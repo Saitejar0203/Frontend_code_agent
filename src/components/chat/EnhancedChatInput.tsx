@@ -11,7 +11,7 @@ import FileInputHandler from './FileInputHandler';
 interface EnhancedChatInputProps {
   value: string;
   onChange: (value: string) => void;
-  onSend: (images?: ImageAttachment[], webSearchEnabled?: boolean, links?: string[]) => void;
+  onSend: (images?: ImageAttachment[], webSearchEnabled?: boolean) => void;
   disabled?: boolean;
   className?: string;
   showPlaceholder?: boolean;
@@ -53,14 +53,7 @@ const EnhancedChatInput: React.FC<EnhancedChatInputProps> = ({
   const currentImages = onImagesChange ? images : internalImages;
   const setCurrentImages = onImagesChange || setInternalImages;
 
-  // URL detection regex
-  const urlRegex = /https?:\/\/(www\.)?[-a-zA-Z0-9@:%._\+~#=]{1,256}\.[a-zA-Z0-9()]{1,6}\b([-a-zA-Z0-9()@:%_\+.~#?&//=]*)/g;
 
-  // Extract URLs from text
-  const extractUrls = (text: string): string[] => {
-    const matches = text.match(urlRegex);
-    return matches ? [...new Set(matches)] : [];
-  };
 
   // Animated placeholder rotation
   useEffect(() => {
@@ -105,11 +98,9 @@ const EnhancedChatInput: React.FC<EnhancedChatInputProps> = ({
 
   const handleSend = () => {
     if ((value.trim() || currentImages.length > 0) && !disabled) {
-      const extractedUrls = extractUrls(value);
       onSend(
         currentImages.length > 0 ? currentImages : undefined,
-        webSearchEnabled,
-        extractedUrls.length > 0 ? extractedUrls : undefined
+        webSearchEnabled
       );
       // Reset web search state after sending
       setWebSearchEnabled(false);

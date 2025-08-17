@@ -21,7 +21,7 @@ import { ImageGenerationStatusIndicator } from '../chat/ImageGenerationStatusInd
 import { stopQueuedMessages, hasQueuedMessages } from '@/services/codeAgentService';
 
 interface CodeChatInterfaceProps {
-  onSendMessage?: (message: string, images?: ImageAttachment[], webSearchEnabled?: boolean, links?: string[]) => void;
+  onSendMessage?: (message: string, images?: ImageAttachment[], webSearchEnabled?: boolean) => void;
   className?: string;
 }
 
@@ -42,16 +42,16 @@ const CodeChatInterface: React.FC<CodeChatInterfaceProps> = ({
     scrollToBottom();
   }, [messages]);
 
-  const handleSubmit = (e: React.FormEvent, images?: ImageAttachment[], webSearchEnabled?: boolean, links?: string[]) => {
+  const handleSubmit = (e: React.FormEvent, images?: ImageAttachment[], webSearchEnabled?: boolean) => {
     e.preventDefault();
-    console.log('🎯 CodeChatInterface handleSubmit called with input:', input, 'images:', images?.length || 0, 'webSearch:', webSearchEnabled, 'links:', links?.length || 0);
+    console.log('🎯 CodeChatInterface handleSubmit called with input:', input, 'images:', images?.length || 0, 'webSearch:', webSearchEnabled);
     if (!input.trim() || isGenerating || hasQueuedMessages() || assistantStatus === 'validation') {
       console.log('❌ Input validation failed, already generating, has queued messages, or validation in progress');
       return;
     }
     
-    console.log('📞 Calling onSendMessage with:', input, 'and', images?.length || 0, 'images, webSearch:', webSearchEnabled, 'links:', links?.length || 0);
-    onSendMessage?.(input, images, webSearchEnabled, links);
+    console.log('📞 Calling onSendMessage with:', input, 'and', images?.length || 0, 'images, webSearch:', webSearchEnabled);
+    onSendMessage?.(input, images, webSearchEnabled);
     setInput('');
     console.log('✅ Input cleared');
   };
@@ -164,7 +164,7 @@ const CodeChatInterface: React.FC<CodeChatInterfaceProps> = ({
       <EnhancedChatInput
         value={input}
         onChange={setInput}
-        onSend={(images, webSearchEnabled, links) => handleSubmit(new Event('submit') as any, images, webSearchEnabled, links)}
+        onSend={(images, webSearchEnabled) => handleSubmit(new Event('submit') as any, images, webSearchEnabled)}
         disabled={isGenerating || hasQueuedMessages() || assistantStatus === 'validation'}
         clearImages={shouldClearImages}
       />
