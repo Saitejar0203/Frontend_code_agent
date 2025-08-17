@@ -11,7 +11,7 @@ import FileInputHandler from './FileInputHandler';
 interface EnhancedChatInputProps {
   value: string;
   onChange: (value: string) => void;
-  onSend: (images?: ImageAttachment[]) => void;
+  onSend: (images?: ImageAttachment[], webSearchEnabled?: boolean, links?: string[]) => void;
   disabled?: boolean;
   className?: string;
   showPlaceholder?: boolean;
@@ -44,6 +44,7 @@ const EnhancedChatInput: React.FC<EnhancedChatInputProps> = ({
   const [currentPlaceholderIndex, setCurrentPlaceholderIndex] = useState(0);
   const [isPlaceholderVisible, setIsPlaceholderVisible] = useState(true);
   const [isHovered, setIsHovered] = useState(false);
+  const [webSearchEnabled, setWebSearchEnabled] = useState(false);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   
@@ -51,6 +52,15 @@ const EnhancedChatInput: React.FC<EnhancedChatInputProps> = ({
   const [internalImages, setInternalImages] = useState<ImageAttachment[]>([]);
   const currentImages = onImagesChange ? images : internalImages;
   const setCurrentImages = onImagesChange || setInternalImages;
+
+  // URL detection regex
+  const urlRegex = /https?:\/\/(www\.)?[-a-zA-Z0-9@:%._\+~#=]{1,256}\.[a-zA-Z0-9()]{1,6}\b([-a-zA-Z0-9()@:%_\+.~#?&//=]*)/g;
+
+  // Extract URLs from text
+  const extractUrls = (text: string): string[] => {
+    const matches = text.match(urlRegex);
+    return matches ? [...new Set(matches)] : [];
+  };
 
   // Animated placeholder rotation
   useEffect(() => {
@@ -95,7 +105,14 @@ const EnhancedChatInput: React.FC<EnhancedChatInputProps> = ({
 
   const handleSend = () => {
     if ((value.trim() || currentImages.length > 0) && !disabled) {
-      onSend(currentImages.length > 0 ? currentImages : undefined);
+      const extractedUrls = extractUrls(value);
+      onSend(
+        currentImages.length > 0 ? currentImages : undefined,
+        webSearchEnabled,
+        extractedUrls.length > 0 ? extractedUrls : undefined
+      );
+      // Reset web search state after sending
+      setWebSearchEnabled(false);
       // Clear images after sending
       clearImages();
     }
@@ -135,8 +152,7 @@ const EnhancedChatInput: React.FC<EnhancedChatInputProps> = ({
   };
 
   const handleSearchWeb = () => {
-    // TODO: Implement web search
-    console.log('Search web clicked');
+    setWebSearchEnabled(!webSearchEnabled);
   };
 
   const handleSuggestIdea = () => {
@@ -224,8 +240,13 @@ const EnhancedChatInput: React.FC<EnhancedChatInputProps> = ({
                 size="sm"
                 onClick={handleSearchWeb}
                 disabled={disabled}
-                className="h-8 px-3 text-gray-500 hover:text-blue-600 hover:bg-blue-50 rounded-lg transition-all duration-200 text-xs font-medium"
-                title="Search Web"
+                className={cn(
+                  "h-8 px-3 rounded-lg transition-all duration-200 text-xs font-medium",
+                  webSearchEnabled
+                    ? "text-blue-600 bg-blue-50 hover:bg-blue-100 border border-blue-200"
+                    : "text-gray-500 hover:text-blue-600 hover:bg-blue-50"
+                )}
+                title={webSearchEnabled ? "Disable Web Search" : "Enable Web Search"}
               >
                 <Search className="w-3 h-3 mr-1" />
                 Search web

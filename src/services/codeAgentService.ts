@@ -181,7 +181,9 @@ export async function sendChatMessage(
   userInput: string,
   webcontainer?: WebContainer,
   actionRunner?: ActionRunner,
-  images?: ImageAttachment[]
+  images?: ImageAttachment[],
+  webSearchEnabled?: boolean,
+  links?: string[]
 ): Promise<void> {
   console.log('🚀 sendChatMessage called with input:', userInput, 'images:', images?.length || 0);
   
@@ -194,13 +196,13 @@ export async function sendChatMessage(
   }
   
   // If both are available, process immediately
-  await sendChatMessageInternal(userInput, webcontainer, actionRunner, false, images);
+  await sendChatMessageInternal(userInput, webcontainer, actionRunner, false, images, webSearchEnabled, links);
 }
 
 /**
  * Internal function for actual message processing
  */
-async function sendChatMessageInternal(userInput: string, webcontainer: WebContainer, actionRunner: ActionRunner, fromQueue: boolean = false, images?: ImageAttachment[]): Promise<void> {
+async function sendChatMessageInternal(userInput: string, webcontainer: WebContainer, actionRunner: ActionRunner, fromQueue: boolean = false, images?: ImageAttachment[], webSearchEnabled?: boolean, links?: string[]): Promise<void> {
   console.log('🚀 sendChatMessageInternal called with input:', userInput, 'fromQueue:', fromQueue);
   
   // Only add user message if not coming from queue (to avoid duplication)
@@ -407,7 +409,10 @@ async function sendChatMessageInternal(userInput: string, webcontainer: WebConta
         
         // Only pass images on the first segment of non-validation calls
         const imagesToSend = (!isValidationCall && segmentCount === 0) ? images : undefined;
-        const result = await streamAgentResponse(currentPrompt, customCallbacks, conversationHistory, segmentCount, imagesToSend);
+        // Only pass web search parameters on the first segment of non-validation calls
+        const webSearchToSend = (!isValidationCall && segmentCount === 0) ? webSearchEnabled : undefined;
+        const linksToSend = (!isValidationCall && segmentCount === 0) ? links : undefined;
+        const result = await streamAgentResponse(currentPrompt, customCallbacks, conversationHistory, segmentCount, imagesToSend, webSearchToSend, linksToSend);
       console.log('✅ streamAgentResponse completed with response length:', result.fullResponse.length, 'finishReason:', result.finishReason);
       
       // Accumulate the response
@@ -645,7 +650,9 @@ export async function streamAgentResponse(
   callbacks: GeminiParserCallbacks, 
   conversationHistory: Array<{role: string, content: string}> = [], 
   segmentCount: number = 0,
-  images?: ImageAttachment[]
+  images?: ImageAttachment[],
+  webSearchEnabled?: boolean,
+  links?: string[]
 ): Promise<{ fullResponse: string; finishReason: string | null }> {
   console.log('🔄 streamAgentResponse started with prompt:', prompt, 'segment:', segmentCount);
   const parser = new StreamingMessageParser(callbacks);
@@ -675,6 +682,17 @@ export async function streamAgentResponse(
         callbacks.onError?.('Failed to process image attachments. Please try again.');
         return { fullResponse: '', finishReason: 'error' };
       }
+    }
+
+    // Add web search parameters if provided (only for non-validation calls)
+    if (webSearchEnabled && !isValidationCall) {
+      requestBody.web_search_enabled = true;
+      console.log('🔍 Web search enabled for this request');
+    }
+    
+    if (links && links.length > 0 && !isValidationCall) {
+      requestBody.links = links;
+      console.log('🔗 Including', links.length, 'links in request:', links);
     }
 
     // Use Gemini 2.5 Pro for validation calls without thinking budget limitation

@@ -71,7 +71,7 @@ const CodeAgentChatInner: React.FC = () => {
     }
   };
 
-  const handleSubmit = async (images?: ImageAttachment[], e?: React.FormEvent) => {
+  const handleSubmit = async (images?: ImageAttachment[], webSearchEnabled?: boolean, links?: string[], e?: React.FormEvent) => {
     if (e) e.preventDefault();
     if (!inputValue.trim()) return;
     
@@ -79,9 +79,9 @@ const CodeAgentChatInner: React.FC = () => {
     setInputValue('');
     setIsInChatMode(true);
     
-    console.log('🚀 CodeAgentChat handleSubmit with', images?.length || 0, 'images');
+    console.log('🚀 CodeAgentChat handleSubmit with', images?.length || 0, 'images, webSearch:', webSearchEnabled, 'links:', links?.length || 0);
     // Use the service function to handle all streaming logic
-    await sendChatMessage(userInput, webcontainer, actionRunner, images);
+    await sendChatMessage(userInput, webcontainer, actionRunner, images, webSearchEnabled, links);
   };
   
   // All streaming and parsing logic moved to codeAgentService.ts
@@ -199,7 +199,7 @@ const CodeAgentChatInner: React.FC = () => {
                 <EnhancedChatInput
                   value={inputValue}
                   onChange={setInputValue}
-                  onSend={(images) => handleSubmit(images)}
+                  onSend={(images, webSearchEnabled, links) => handleSubmit(images, webSearchEnabled, links)}
                   disabled={false}
                   className="bg-white rounded-2xl shadow-xl border-0 relative z-20"
                   showPlaceholder={true}
