@@ -872,3 +872,49 @@ export async function generateStructuredProject(prompt: string, callbacks: Gemin
 }
 
 // Removed handleStructuredResponse function - now using bolt-style XML parsing
+
+/**
+ * Get a coding project suggestion from the AI using gemini-2.5-flash
+ * @returns Promise<string> - The suggestion text
+ */
+export async function getSuggestion(): Promise<string> {
+  const apiBaseUrl = 'http://localhost:8002';
+  const suggestionPrompt = "You are an expert in conceptualizing innovative web applications, acting as a creative director for a cutting-edge digital studio. Your specialty is blending art, utility, and interactive design. Your task is to devise a single, creative project idea for a code agent to build, similar in style to concepts like 'a Pomodoro app with a Ghibli-inspired background' or 'a developer portfolio with a Matrix-style effect.' Follow these steps in your thought process: Select a Core Utility: First, choose a common and useful web application category. Examples: a habit tracker, a personal finance dashboard, an interactive resume/portfolio, a note-taking app, an educational explainer. Define a Striking Aesthetic: Second, select a unique and specific visual or thematic style, often from a completely different domain. Draw inspiration from any culture, historical period, or artistic movement. Examples: the moody, neon-lit aesthetic of cyberpunk films, the clean lines and tranquility of Scandinavian design, the bold geometric patterns of Art Deco architecture, the organic, flowing forms of Art Nouveau illustration. Synthesize the Concept: Third, combine the utility from Step 1 with the aesthetic from Step 2. Focus on creating a unique user experience. For example, instead of just a 'finance app,' think about what a 'finance dashboard designed with the bold aesthetic of Art Deco architecture' would look and feel like, visualizing expenses as elements on a grand, geometric display. Formulate the Command: Based on the steps above, formulate the final project idea. The idea must be for an interactive, useful, and aesthetically beautiful web application that uses pre-generated images. The final web app itself cannot generate new images or access third-party APIs. After completing your thought process, provide only the single, final project idea as your answer. The output must be a single sentence, phrased as a command for a code agent. What to Avoid: Do not suggest generic e-commerce sites or basic informational websites. The goal is a functional tool wrapped in a highly creative and specific visual theme. #it is important to never generate code";
+  
+  try {
+    const requestBody = {
+      message: suggestionPrompt,
+      conversation_history: [],
+      stream: false, // We want a complete response, not streaming
+      model_override: "gemini-2.5-flash" // Use the fast model for suggestions
+    };
+
+    const response = await fetch(`${apiBaseUrl}/api/v1/chat`, {
+      method: 'POST',
+      headers: { 
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(requestBody),
+    });
+
+    if (!response.ok) {
+      throw new Error(`HTTP error! status: ${response.status}`);
+    }
+
+    const data = await response.json();
+    
+    // Extract the suggestion text from the response
+    if (data && data.response) {
+      return data.response;
+    } else if (data && data.message) {
+      return data.message;
+    } else if (data && data.content) {
+      return data.content;
+    } else {
+      throw new Error('Invalid response format from suggestion API');
+    }
+  } catch (error) {
+    console.error('Error getting suggestion:', error);
+    throw new Error('Failed to get suggestion. Please try again.');
+  }
+}

@@ -7,6 +7,7 @@ import { ImageAttachment } from '@/lib/stores/chatStore';
 import ImagePreviewList from './ImagePreviewList';
 import CompactImageThumbnail from './CompactImageThumbnail';
 import FileInputHandler from './FileInputHandler';
+import { getSuggestion } from '@/services/codeAgentService';
 
 interface EnhancedChatInputProps {
   value: string;
@@ -45,6 +46,8 @@ const EnhancedChatInput: React.FC<EnhancedChatInputProps> = ({
   const [isPlaceholderVisible, setIsPlaceholderVisible] = useState(true);
   const [isHovered, setIsHovered] = useState(false);
   const [webSearchEnabled, setWebSearchEnabled] = useState(false);
+  const [isSuggestionLoading, setIsSuggestionLoading] = useState(false);
+  const [suggestionError, setSuggestionError] = useState<string | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   
@@ -146,9 +149,23 @@ const EnhancedChatInput: React.FC<EnhancedChatInputProps> = ({
     setWebSearchEnabled(!webSearchEnabled);
   };
 
-  const handleSuggestIdea = () => {
-    // TODO: Implement idea suggestion
-    console.log('Suggest idea clicked');
+  const handleSuggestIdea = async () => {
+    if (isSuggestionLoading) return;
+    
+    setIsSuggestionLoading(true);
+    setSuggestionError(null);
+    
+    try {
+      const suggestion = await getSuggestion();
+      onChange(suggestion);
+      console.log('Suggestion received:', suggestion);
+    } catch (error) {
+      console.error('Failed to get suggestion:', error);
+      const errorMessage = error instanceof Error ? error.message : 'Failed to get suggestion. Please try again.';
+      setSuggestionError(errorMessage);
+    } finally {
+      setIsSuggestionLoading(false);
+    }
   };
 
   return (
@@ -208,6 +225,15 @@ const EnhancedChatInput: React.FC<EnhancedChatInputProps> = ({
             
 
           </div>
+          
+          {/* Suggestion Error */}
+          {suggestionError && (
+            <div className="px-4 pb-2">
+              <div className="bg-red-50 border border-red-200 text-red-700 px-3 py-2 rounded-lg text-sm">
+                {suggestionError}
+              </div>
+            </div>
+          )}
 
           {/* Action buttons row */}
           <div className="flex items-center justify-between px-4 pb-4">
@@ -249,12 +275,16 @@ const EnhancedChatInput: React.FC<EnhancedChatInputProps> = ({
                   variant="ghost"
                   size="sm"
                   onClick={handleSuggestIdea}
-                  disabled={disabled}
-                  className="h-8 px-3 text-gray-500 hover:text-purple-600 hover:bg-purple-50 rounded-lg transition-all duration-200 text-xs font-medium"
-                  title="Suggest me an idea"
+                  disabled={disabled || isSuggestionLoading}
+                  className="h-8 px-3 text-gray-500 hover:text-purple-600 hover:bg-purple-50 rounded-lg transition-all duration-200 text-xs font-medium disabled:opacity-50 disabled:cursor-not-allowed"
+                  title={isSuggestionLoading ? "Getting suggestion..." : "Suggest me an idea"}
                 >
-                  <Lightbulb className="w-3 h-3 mr-1" />
-                  Suggest me an idea
+                  {isSuggestionLoading ? (
+                    <Loader2 className="w-3 h-3 mr-1 animate-spin" />
+                  ) : (
+                    <Lightbulb className="w-3 h-3 mr-1" />
+                  )}
+                  {isSuggestionLoading ? "Getting idea..." : "Suggest me an idea"}
                 </Button>
               )}
             </div>
