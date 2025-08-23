@@ -7,7 +7,6 @@ import {
   Folder, 
   FolderOpen, 
   Search,
-  Plus,
   MoreHorizontal,
   FileText,
   FolderPlus,
@@ -16,9 +15,20 @@ import {
   Trash2,
   Download,
   Edit3,
-  Eye,
-  EyeOff,
-  Archive
+  Archive,
+  Code,
+  Database,
+  Settings,
+  Globe,
+  Palette,
+  FileJson,
+  BookOpen,
+  Zap,
+  Container,
+  Coffee,
+  Wrench,
+  Diamond,
+  Gem
 } from 'lucide-react';
 import { workbenchStore, setSelectedFile, toggleFolder, type FileNode } from '@/lib/stores/workbenchStore';
 import { Button } from '@/components/ui/button';
@@ -31,12 +41,6 @@ import {
   ContextMenuSeparator, 
   ContextMenuTrigger, 
 } from '@/components/ui/context-menu'; 
-import { 
-  DropdownMenu, 
-  DropdownMenuContent, 
-  DropdownMenuItem, 
-  DropdownMenuTrigger, 
-} from '@/components/ui/dropdown-menu'; 
 import { getDownloadService } from '@/services/downloadService'; 
 import { useWebContainer } from '@/components/WebContainer/WebContainerProvider'; 
 import { ActionRunner } from '@/lib/runtime/ActionRunner';
@@ -47,9 +51,8 @@ interface FileExplorerProps {
 }
 
 const FileExplorer: React.FC<FileExplorerProps> = ({ className, onFileSelect }) => {
-  const { fileTree: files, selectedFile, modifiedFiles } = useStore(workbenchStore);
+  const { fileTree: files, selectedFile, modifiedFiles, artifacts, selectedArtifactId } = useStore(workbenchStore);
   const [searchQuery, setSearchQuery] = useState('');
-  const [showHiddenFiles, setShowHiddenFiles] = useState(false);
   const [draggedItem, setDraggedItem] = useState<FileNode | null>(null);
   const [dragOverItem, setDragOverItem] = useState<string | null>(null);
   const [contextMenuNode, setContextMenuNode] = useState<FileNode | null>(null);
@@ -59,33 +62,43 @@ const FileExplorer: React.FC<FileExplorerProps> = ({ className, onFileSelect }) 
 
   // Get file icon based on extension
   const getFileIcon = (filename: string, isFolder: boolean = false) => {
-    if (isFolder) return <Folder className="w-4 h-4" />;
+    if (isFolder) return <Folder className="w-4 h-4 text-blue-500" />;
     
     const ext = filename.split('.').pop()?.toLowerCase();
-    const iconMap: Record<string, string> = {
-      'js': '🟨', 'jsx': '🟦', 'ts': '🟦', 'tsx': '🟦',
-      'py': '🐍', 'html': '🌐', 'css': '🎨', 'scss': '🎨',
-      'json': '📋', 'md': '📝', 'yml': '⚙️', 'yaml': '⚙️',
-      'xml': '📄', 'sql': '🗃️', 'sh': '⚡', 'bash': '⚡',
-      'dockerfile': '🐳', 'go': '🐹', 'rs': '🦀', 'php': '🐘',
-      'rb': '💎', 'java': '☕', 'c': '🔧', 'cpp': '🔧', 'cs': '🔷'
+    const iconMap: Record<string, React.ReactElement> = {
+      'js': <Code className="w-4 h-4 text-yellow-500" />,
+      'jsx': <Code className="w-4 h-4 text-blue-500" />,
+      'ts': <Code className="w-4 h-4 text-blue-600" />,
+      'tsx': <Code className="w-4 h-4 text-blue-600" />,
+      'py': <Code className="w-4 h-4 text-green-500" />,
+      'html': <Globe className="w-4 h-4 text-orange-500" />,
+      'css': <Palette className="w-4 h-4 text-blue-400" />,
+      'scss': <Palette className="w-4 h-4 text-pink-500" />,
+      'json': <FileJson className="w-4 h-4 text-yellow-600" />,
+      'md': <BookOpen className="w-4 h-4 text-gray-600" />,
+      'yml': <Settings className="w-4 h-4 text-purple-500" />,
+      'yaml': <Settings className="w-4 h-4 text-purple-500" />,
+      'xml': <FileText className="w-4 h-4 text-orange-400" />,
+      'sql': <Database className="w-4 h-4 text-blue-700" />,
+      'sh': <Zap className="w-4 h-4 text-green-600" />,
+      'bash': <Zap className="w-4 h-4 text-green-600" />,
+      'dockerfile': <Container className="w-4 h-4 text-blue-600" />,
+      'go': <Code className="w-4 h-4 text-cyan-500" />,
+      'rs': <Code className="w-4 h-4 text-orange-600" />,
+      'php': <Code className="w-4 h-4 text-purple-600" />,
+      'rb': <Gem className="w-4 h-4 text-red-500" />,
+      'java': <Coffee className="w-4 h-4 text-orange-700" />,
+      'c': <Wrench className="w-4 h-4 text-gray-600" />,
+      'cpp': <Wrench className="w-4 h-4 text-blue-700" />,
+      'cs': <Diamond className="w-4 h-4 text-purple-700" />
     };
     
-    return (
-      <span className="text-xs mr-1">
-        {iconMap[ext || ''] || '📄'}
-      </span>
-    );
+    return iconMap[ext || ''] || <FileText className="w-4 h-4 text-gray-500" />;
   };
 
-  // Filter files based on search and hidden files setting
+  // Filter files based on search query
   const filterFiles = useCallback((nodes: FileNode[]): FileNode[] => {
     return nodes.filter(node => {
-      // Filter hidden files
-      if (!showHiddenFiles && node.name.startsWith('.')) {
-        return false;
-      }
-      
       // Filter by search query
       if (searchQuery && !node.name.toLowerCase().includes(searchQuery.toLowerCase())) {
         // Check if any children match for folders
@@ -106,7 +119,7 @@ const FileExplorer: React.FC<FileExplorerProps> = ({ className, onFileSelect }) 
       }
       return node;
     });
-  }, [searchQuery, showHiddenFiles]);
+  }, [searchQuery]);
 
   const handleFileClick = useCallback((file: FileNode) => {
     if (file.type === 'file') {
@@ -214,7 +227,16 @@ const FileExplorer: React.FC<FileExplorerProps> = ({ className, onFileSelect }) 
     try {
       setIsDownloading(true);
       const downloadService = getDownloadService(actionRunner, webcontainer);
-      await downloadService.downloadProject();
+      
+      // Get the current artifact title for custom filename
+      let artifactTitle = 'project';
+      if (selectedArtifactId && artifacts[selectedArtifactId]) {
+        artifactTitle = artifacts[selectedArtifactId].title || 'project';
+        // Clean the title to be filename-safe
+        artifactTitle = artifactTitle.replace(/[^a-zA-Z0-9_-]/g, '_');
+      }
+      
+      await downloadService.downloadProject(artifactTitle);
     } catch (error) {
       console.error('Failed to download project:', error);
       alert(`Failed to download project: ${error instanceof Error ? error.message : 'Unknown error'}`);
@@ -329,42 +351,18 @@ const FileExplorer: React.FC<FileExplorerProps> = ({ className, onFileSelect }) 
       <div className="border-b border-gray-200 dark:border-gray-700 p-3">
         <div className="flex items-center justify-between mb-2">
           <h3 className="text-sm font-medium text-gray-700 dark:text-gray-300">Files</h3>
-          <div className="flex items-center space-x-1">
+          <div className="flex items-center">
             <Button
               variant="ghost"
               size="sm"
               onClick={handleDownloadProject}
               disabled={isDownloading || !files || files.length === 0}
-              className="h-6 w-6 p-0"
+              className="h-8 px-3 text-xs"
               title="Download Project as ZIP"
             >
-              <Archive className={`w-3 h-3 ${isDownloading ? 'animate-pulse' : ''}`} />
+              <Archive className={`w-4 h-4 mr-1 ${isDownloading ? 'animate-pulse' : ''}`} />
+              {isDownloading ? 'Downloading...' : 'Download'}
             </Button>
-            <Button
-              variant="ghost"
-              size="sm"
-              onClick={() => setShowHiddenFiles(!showHiddenFiles)}
-              className="h-6 w-6 p-0"
-            >
-              {showHiddenFiles ? <Eye className="w-3 h-3" /> : <EyeOff className="w-3 h-3" />}
-            </Button>
-            <DropdownMenu>
-              <DropdownMenuTrigger asChild>
-                <Button variant="ghost" size="sm" className="h-6 w-6 p-0">
-                  <Plus className="w-3 h-3" />
-                </Button>
-              </DropdownMenuTrigger>
-              <DropdownMenuContent>
-                <DropdownMenuItem onClick={() => handleCreateFile()}>
-                  <FileText className="w-4 h-4 mr-2" />
-                  New File
-                </DropdownMenuItem>
-                <DropdownMenuItem onClick={() => handleCreateFolder()}>
-                  <FolderPlus className="w-4 h-4 mr-2" />
-                  New Folder
-                </DropdownMenuItem>
-              </DropdownMenuContent>
-            </DropdownMenu>
           </div>
         </div>
         <div className="relative">

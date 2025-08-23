@@ -7,6 +7,11 @@
 export const MAX_RESPONSE_SEGMENTS = 5;
 
 /**
+ * Backend pagination finish tag that signals response completion
+ */
+export const FINISH_TAG = '<FinishS2394>';
+
+/**
  * Continue prompt to append when requesting continuation from the LLM
  * This instructs the model to continue from where it left off
  */
@@ -20,7 +25,8 @@ export const CONTINUE_PROMPT = `Your previous response was truncated due to a to
  
  **CRITICAL FORMATTING RULES:** - **DO NOT** repeat any content that was successfully and completely sent before the point of interruption. 
  - **DO NOT** add any conversational text, apologies, or explanations (e.g., "Okay, restarting the action..."). Your response must be a direct and seamless continuation. 
- - **You MUST NOT create or modify a \`plan.md\` file. Simply continue the previous, unfinished response.** 
+ - **You MUST NOT create or modify a \`plan.md\` file if it was already created. If it wasn't created then start by creating a Plan.md** 
+ - **IMPORTANT:** When you complete your response, you MUST end with the ${FINISH_TAG} tag to signal completion.
  `;
 
 /**
@@ -51,8 +57,41 @@ export function isTruncationFinishReason(finishReason: string | null | undefined
  */
 export function isNullResponse(content: string | null | undefined): boolean {
   if (!content) return true;
-  const trimmed = content.trim();
-  return trimmed === '' || trimmed === 'null' || trimmed === 'undefined';
+  return content.trim().length === 0;
+}
+
+/**
+ * Check if a response contains the finish tag indicating completion
+ */
+export function hasFinishTag(content: string | null | undefined): boolean {
+  if (!content) return false;
+  return content.includes(FINISH_TAG);
+}
+
+/**
+ * Strip the finish tag from response content before displaying to user
+ */
+export function stripFinishTag(content: string): string {
+  return content.replace(FINISH_TAG, '').trim();
+}
+
+/**
+ * Check if continuation should be triggered based on finish reason and finish tag presence
+ */
+export function shouldContinueResponse(
+  finishReason: string | null | undefined,
+  content: string | null | undefined
+): boolean {
+  // Continue if truncated by token limits
+  if (isTruncationFinishReason(finishReason)) return true;
+  
+  // Continue if response is null/empty
+  if (isNullResponse(content)) return true;
+  
+  // Continue if finish tag is missing (indicates incomplete response)
+  if (!hasFinishTag(content)) return true;
+  
+  return false;
 }
 
 /**
@@ -74,7 +113,7 @@ export const VALIDATION_PROMPT = `Review the entire conversation between human a
 IMPORTANT: If terminal output is provided below, analyze it for any errors, warnings, or issues. Note that some commands from the conversation history might still be processing or pending execution.
 
 If the code is satisfactory and meets all requirements, respond with <validation_complete> and nothing else #very important to use only <validation_complete>
-If code corrections are needed, provide ONLY the necessary corrective actions. If the original response was within a <boltArtifact> context, wrap your corrective actions within the appropriate <boltArtifact id="[artifactId]" title="[title]"> tag. Provide complete file modifications followed by terminal commands that should be executed AFTER all pending commands complete. Do NOT include explanatory text. **You MUST NOT create a \`plan.md\` file during this validation step.**`;
+If code corrections are needed, provide ONLY the necessary corrective actions. If the original response was within a <boltArtifact> context, wrap your corrective actions within the appropriate <boltArtifact id="[artifactId]" title="[title]"> tag. Provide complete file modifications followed by terminal commands that should be executed AFTER all pending commands complete. Do NOT include explanatory text. **You MUST NOT create a \`plan.md\` file during this validation step.**.`;
 
 /**
  * Tags that indicate validation is complete and approved

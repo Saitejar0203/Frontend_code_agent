@@ -5,7 +5,7 @@ import { addMessage, addMessageWithImages, updateMessage, setGenerating, setThin
 import { chatStore } from '@/lib/stores/chatStore';
 import { addArtifact, addArtifactAndPrepareExecution, addActionToArtifact, addOrUpdateFileFromAction, resetWorkbenchForNewConversation, workbenchStore } from '@/lib/stores/workbenchStore';
 import { WebContainer } from '@webcontainer/api';
-import { MAX_RESPONSE_SEGMENTS, CONTINUE_PROMPT, isTruncationFinishReason, isNullResponse, MAX_VALIDATION_ITERATIONS, VALIDATION_PROMPT, isValidationApproved } from '@/lib/constants/continuation';
+import { MAX_RESPONSE_SEGMENTS, CONTINUE_PROMPT, isTruncationFinishReason, isNullResponse, MAX_VALIDATION_ITERATIONS, VALIDATION_PROMPT, isValidationApproved, shouldContinueResponse, hasFinishTag, stripFinishTag } from '@/lib/constants/continuation';
 import { imageGenerationService } from './imageGenerationService';
 
 // Message queue for handling requests when WebContainer is not ready
@@ -410,23 +410,31 @@ async function sendChatMessageInternal(userInput: string, webcontainer: WebConta
         const imagesToSend = (!isValidationCall && segmentCount === 0) ? images : undefined;
         // Only pass web search parameters on the first segment of non-validation calls
         const webSearchToSend = (!isValidationCall && segmentCount === 0) ? webSearchEnabled : undefined;
-        const result = await streamAgentResponse(currentPrompt, customCallbacks, conversationHistory, segmentCount, imagesToSend, webSearchToSend);
+        const result = await streamAgentResponse(currentPrompt, customCallbacks, conversationHistory, segmentCount, imagesToSend, webSearchToSend, 'agent');
       console.log('✅ streamAgentResponse completed with response length:', result.fullResponse.length, 'finishReason:', result.finishReason);
       
       // Accumulate the response
       fullCombinedResponse += result.fullResponse;
       rawResponse = fullCombinedResponse;
       
-      // Check if we need to continue due to truncation
-      if (isTruncationFinishReason(result.finishReason) || isNullResponse(result.fullResponse)) {
+      // Check if we need to continue based on finish reason and finish tag presence
+      if (shouldContinueResponse(result.finishReason, result.fullResponse)) {
         if (segmentCount < MAX_RESPONSE_SEGMENTS - 1) {
-          console.log('🔄 Response truncated, continuing...', { finishReason: result.finishReason, segmentCount });
+          const reason = isTruncationFinishReason(result.finishReason) ? 'token limit' : 
+                        isNullResponse(result.fullResponse) ? 'null response' : 'missing finish tag';
+          console.log('🔄 Response incomplete, continuing...', { 
+            finishReason: result.finishReason, 
+            segmentCount, 
+            reason,
+            hasFinishTag: hasFinishTag(result.fullResponse)
+          });
           setAssistantStatus('max_tokens');
-          setStatusMessage('Continuing due to length limit...');
+          setStatusMessage(`Continuing due to ${reason}...`);
           
-          // Update conversation history with current response
+          // Update conversation history with current response (strip finish tag if present)
           if (result.fullResponse.trim()) {
-            conversationHistory.push({ role: 'assistant', content: result.fullResponse });
+            const cleanedResponse = stripFinishTag(result.fullResponse);
+            conversationHistory.push({ role: 'assistant', content: cleanedResponse });
           }
           conversationHistory.push({ role: 'user', content: CONTINUE_PROMPT });
           
@@ -440,13 +448,14 @@ async function sendChatMessageInternal(userInput: string, webcontainer: WebConta
         }
       }
       
-      // Check if we need to perform validation
-      if (result.finishReason === 'STOP' && !isValidationCall && result.fullResponse.trim()) {
-        console.log('🔍 Finish reason is STOP, will perform validation after completing UI state...');
+      // Check if we need to perform validation (only when finish tag is present)
+      if (result.finishReason === 'STOP' && !isValidationCall && result.fullResponse.trim() && hasFinishTag(result.fullResponse)) {
+        console.log('🔍 Finish tag detected, will perform validation after completing UI state...');
         willPerformValidation = true;
         
-        // Update conversation history with current response
-        conversationHistory.push({ role: 'assistant', content: result.fullResponse });
+        // Update conversation history with current response (strip finish tag)
+        const cleanedResponse = stripFinishTag(result.fullResponse);
+        conversationHistory.push({ role: 'assistant', content: cleanedResponse });
         
         // onComplete will be called after validation completes
         break;
@@ -563,7 +572,10 @@ async function performValidationLoop(
       VALIDATION_PROMPT,
       callbacks,
       validationHistory,
-      segmentCount + 1
+      segmentCount + 1,
+      undefined, // No images for validation
+      undefined, // No web search for validation
+      'validation' // Specify the response type
     );
     
     // Handle empty responses
@@ -644,12 +656,13 @@ function toImageData(images: ImageAttachment[]): Array<{data: string, mime_type:
 }
 
 export async function streamAgentResponse(
-  prompt: string, 
-  callbacks: GeminiParserCallbacks, 
-  conversationHistory: Array<{role: string, content: string}> = [], 
+  prompt: string,
+  callbacks: GeminiParserCallbacks,
+  conversationHistory: Array<{role: string, content: string}> = [],
   segmentCount: number = 0,
   images?: ImageAttachment[],
-  webSearchEnabled?: boolean
+  webSearchEnabled?: boolean,
+  responseType: 'agent' | 'validation' = 'agent'
 ): Promise<{ fullResponse: string; finishReason: string | null }> {
   console.log('🔄 streamAgentResponse started with prompt:', prompt, 'segment:', segmentCount);
   const parser = new StreamingMessageParser(callbacks);
@@ -715,6 +728,10 @@ export async function streamAgentResponse(
     let fullResponse = '';
     let lastFinishReason: string | null = null;
     const messageId = `msg_${Date.now()}`;
+    
+    // Track recent chunks for finish tag detection
+    const recentChunks: string[] = [];
+    const MAX_RECENT_CHUNKS = 3;
 
     while (true) {
       const { done, value } = await reader.read();
@@ -741,17 +758,43 @@ export async function streamAgentResponse(
               if (parsed.done) {
                 console.log('🏁 Received completion signal with finish_reason:', parsed.finish_reason);
                 lastFinishReason = parsed.finish_reason;
-                // Just store the finish reason, don't make recursive calls
+                
+                // Check for FinishS2394 tag in recent chunks when finish reason is STOP
+                if (lastFinishReason === 'STOP') {
+                  const recentContent = recentChunks.join('');
+                  const hasFinishTagInChunks = hasFinishTag(recentContent);
+                  console.log('🔍 Checking recent chunks for finish tag:', { hasFinishTagInChunks, recentContent });
+                  
+                  // If finish tag found in recent chunks, trigger validation immediately
+                  if (hasFinishTagInChunks && prompt !== VALIDATION_PROMPT && fullResponse.trim()) {
+                    console.log('🔍 Finish tag detected in recent chunks, preparing for validation...');
+                    
+                    // Set a flag to trigger validation after stream completes
+                    (callbacks as any)._shouldValidate = true;
+                  }
+                }
               }
               
               // Handle Gemini API response format
               if (parsed.chunk) {
                 const chunk = parsed.chunk;
                 console.log('🧩 Processing chunk:', chunk);
+                
+                // Add chunk to recent chunks tracking
+                recentChunks.push(chunk);
+                if (recentChunks.length > MAX_RECENT_CHUNKS) {
+                  recentChunks.shift(); // Remove oldest chunk
+                }
+                
                 fullResponse += chunk;
-                // Parse the chunk content for bolt-style XML tags
-                parser.parse(messageId, chunk);
-                console.log('🔍 Processed chunk with parser');
+                
+                // Strip finish tag from chunk before parsing to prevent UI display
+                const cleanChunk = stripFinishTag(chunk);
+                if (cleanChunk) {
+                  // Parse the cleaned chunk content for bolt-style XML tags
+                  parser.parse(messageId, cleanChunk);
+                  console.log('🔍 Processed cleaned chunk with parser');
+                }
                 // Store parser reference for callbacks to access
                 (callbacks as any)._parser = parser;
               } else if (parsed.error) {
@@ -789,45 +832,12 @@ export async function streamAgentResponse(
           const data = line.slice(6);
           try {
             const parsed = JSON.parse(data);
-            if (parsed.done) {
-              lastFinishReason = parsed.finish_reason;
-              // Check for continuation after processing final buffer
-              if (isTruncationFinishReason(lastFinishReason) || isNullResponse(fullResponse)) {
-                if (segmentCount < MAX_RESPONSE_SEGMENTS - 1) {
-                  console.log('🔄 Response truncated in final buffer, continuing...', { finishReason: lastFinishReason, segmentCount });
-                  
-                  const updatedHistory = [...conversationHistory];
-                  if (fullResponse.trim()) {
-                    updatedHistory.push({ role: 'assistant', content: fullResponse });
-                  }
-                  updatedHistory.push({ role: 'user', content: CONTINUE_PROMPT });
-                  
-                  const continuationResponse = await streamAgentResponse(CONTINUE_PROMPT, callbacks, updatedHistory, segmentCount + 1);
-                  return fullResponse + continuationResponse;
-                } else {
-                  console.warn('⚠️ Maximum continuation segments reached in final buffer, stopping');
-                }
-              }
-              
-              // Check if we need to perform validation
-              const isValidationCall = prompt === VALIDATION_PROMPT;
-              
-              if (lastFinishReason === 'STOP' && !isValidationCall && fullResponse.trim()) {
-                console.log('🔍 Finish reason is STOP in final buffer, starting validation loop for completed multi-segment response...');
-                
-                // Update conversation history with current response
-                const updatedHistory = [...conversationHistory];
-                updatedHistory.push({ role: 'assistant', content: fullResponse });
-                
-                // Perform validation loop
-                const validationResponse = await performValidationLoop(updatedHistory, callbacks, segmentCount);
-                
-                // Return combined response
-                return fullResponse + validationResponse;
-              }
-              continue;
-            }
             if (parsed.chunk) {
+              // Add final chunks to recent chunks tracking
+              recentChunks.push(parsed.chunk);
+              if (recentChunks.length > MAX_RECENT_CHUNKS) {
+                recentChunks.shift();
+              }
               fullResponse += parsed.chunk;
               parser.parse(messageId, parsed.chunk);
               (callbacks as any)._parser = parser;
@@ -845,10 +855,69 @@ export async function streamAgentResponse(
 
     // Now that all data has been fully parsed, we can safely call onComplete.
     callbacks.onComplete?.();
+    
+    // Handle validation if flag was set during streaming
+    if ((callbacks as any)._shouldValidate) {
+      console.log('🔍 Validation flag detected, starting validation loop...');
+      
+      // Reset the validation flag immediately to prevent infinite loops
+      (callbacks as any)._shouldValidate = false;
+      
+      // Update conversation history with current response (strip finish tag)
+      const updatedHistory = [...conversationHistory];
+      const cleanedResponse = stripFinishTag(fullResponse);
+      updatedHistory.push({ role: 'assistant', content: cleanedResponse });
+      
+      // Perform validation loop
+      const validationResponse = await performValidationLoop(updatedHistory, callbacks, segmentCount);
+      
+      // Return combined response (with finish tag stripped from original)
+      return cleanedResponse + validationResponse;
+    }
+    
+    // Determine if the loop should continue based on the response type
+    if (responseType === 'agent') {
+      // For standard agent responses, use the existing continuation logic
+      if (shouldContinueResponse(lastFinishReason, fullResponse)) {
+        if (segmentCount < MAX_RESPONSE_SEGMENTS - 1) {
+          const reason = isTruncationFinishReason(lastFinishReason) ? 'token limit' : 
+                        isNullResponse(fullResponse) ? 'null response' : 'missing finish tag';
+          console.log('🔄 Response incomplete, continuing...', { 
+            finishReason: lastFinishReason, 
+            segmentCount, 
+            reason,
+            hasFinishTag: hasFinishTag(fullResponse)
+          });
+          
+          const updatedHistory = [...conversationHistory];
+          if (fullResponse.trim()) {
+            // Strip finish tag before adding to history
+            const cleanedResponse = stripFinishTag(fullResponse);
+            updatedHistory.push({ role: 'assistant', content: cleanedResponse });
+          }
+          updatedHistory.push({ role: 'user', content: CONTINUE_PROMPT });
+          
+          const continuationResponse = await streamAgentResponse(CONTINUE_PROMPT, callbacks, updatedHistory, segmentCount + 1, undefined, undefined, 'agent');
+          // Strip finish tag from current response before combining
+          const cleanedCurrentResponse = stripFinishTag(fullResponse);
+          return cleanedCurrentResponse + continuationResponse;
+        } else {
+          console.warn('⚠️ Maximum continuation segments reached, stopping');
+        }
+      }
+    } else if (responseType === 'validation') {
+      // For validation responses, we simply check if it was approved
+      // We DO NOT check for continuation tags. The loop naturally ends here.
+      if (isValidationApproved(fullResponse)) {
+        console.log('✅ Validation approved.');
+      } else {
+        console.warn('⚠️ Validation failed or returned corrections.');
+      }
+    }
     // --- END OF THE FIX ---
     
     console.log('📊 Returning full response with length:', fullResponse.length);
-    return { fullResponse, finishReason: lastFinishReason };
+    return { fullResponse: stripFinishTag(fullResponse), finishReason: lastFinishReason };
   } catch (error) {
     console.error('Error in streamAgentResponse:', error);
     

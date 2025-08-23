@@ -65,6 +65,11 @@ class ActionRunner {
   private isProcessing = false;
   private actionIdMap: Map<BoltAction, string> = new Map(); // Track action IDs
   private artifactIdMap: Map<BoltAction, string> = new Map(); // Track artifact IDs
+  
+  // Race condition prevention properties
+  private pendingFileOperations: Set<string> = new Set(); // Track active file operations
+  private deferredFileQueue: BoltAction[] = []; // Files arriving during shell execution
+  private isExecutingShell = false; // Track shell execution state
 
   constructor(webcontainerPromise: Promise<WebContainer>) {
     this.#webcontainer = webcontainerPromise;
@@ -121,6 +126,7 @@ class ActionRunner {
   /**
    * Execute a clean BoltAction object
    * This is the main entry point for action execution
+   * Handles deferred file queuing during shell execution
    */
   public async runAction(action: BoltAction, artifactId?: string): Promise<string> {
     const actionId = `${action.type}_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
@@ -145,7 +151,14 @@ class ActionRunner {
         action.operation = 'update';
         this.logger.warn(`Could not check file existence for ${action.filePath}, defaulting to update`);
       }
-      this.fileActionQueue.push(action);
+      
+      // If shell is executing, defer file actions to prevent race conditions
+      if (this.isExecutingShell) {
+        this.deferredFileQueue.push(action);
+        console.log(`📄 Deferring file action during shell execution: ${action.filePath}`);
+      } else {
+        this.fileActionQueue.push(action);
+      }
     } else if (action.type === 'shell') {
       this.logger.info(`Queuing command: ${action.content}`);
       appendTerminalOutput(`⚡ Queuing command: ${action.content}\n`);
@@ -220,20 +233,56 @@ class ActionRunner {
           
           console.log(`📦 Executing batch of ${filesToProcess.length} file actions.`);
           await this.executeFileBatch(filesToProcess);
+          
+          // CRITICAL: Wait for all file operations to complete before shell commands
+          await this.waitForFileOperationsToComplete();
         }
 
-        // 2. Process one shell command (sequentially)
+        // 2. Process shell commands only after files complete
         if (this.shellActionQueue.length > 0) {
+          this.isExecutingShell = true;
           const commandToProcess = this.shellActionQueue.shift()!; // Get the next command
           
           console.log(`⚡ Executing shell command: ${commandToProcess.content}`);
           await this.runShellActionFromQueue(commandToProcess);
+          this.isExecutingShell = false;
+          
+          // Process any deferred files that arrived during shell execution
+          if (this.deferredFileQueue.length > 0) {
+            this.fileActionQueue.push(...this.deferredFileQueue);
+            this.deferredFileQueue = [];
+            console.log(`📄 Processing ${this.fileActionQueue.length} deferred file actions`);
+          }
         }
       }
     } catch (error) {
       console.error('❌ Error during queue processing:', error);
     } finally {
       this.isProcessing = false; // Release the lock
+      this.isExecutingShell = false; // Ensure shell execution flag is reset
+    }
+  }
+
+  /**
+   * Wait for all pending file operations to complete before proceeding with shell commands
+   * This prevents race conditions where shell commands execute before required files are written
+   */
+  private async waitForFileOperationsToComplete(): Promise<void> {
+    const maxWait = 10000; // 10 seconds timeout
+    const startTime = Date.now();
+    
+    if (this.pendingFileOperations.size > 0) {
+      this.logger.info(`Waiting for ${this.pendingFileOperations.size} file operations to complete before shell execution`);
+    }
+    
+    while (this.pendingFileOperations.size > 0 && (Date.now() - startTime) < maxWait) {
+      await new Promise(resolve => setTimeout(resolve, 100));
+    }
+    
+    if (this.pendingFileOperations.size > 0) {
+      this.logger.warn(`Timeout waiting for file operations. ${this.pendingFileOperations.size} operations still pending.`);
+    } else if (this.pendingFileOperations.size === 0) {
+      this.logger.info('All file operations completed, proceeding with shell execution');
     }
   }
 
@@ -251,6 +300,9 @@ class ActionRunner {
       this.logger.error('Action ID not found for file action');
       return;
     }
+
+    // Track this file operation as pending
+    this.pendingFileOperations.add(action.filePath);
 
     try {
       await this.initialize();
@@ -276,6 +328,9 @@ class ActionRunner {
       this.logger.info(`File action completed: ${action.filePath}`);
     } catch (error) {
       this.handleActionFailure(actionId, error instanceof Error ? error : new Error('File action failed'));
+    } finally {
+      // Always remove from pending operations when done (success or failure)
+      this.pendingFileOperations.delete(action.filePath);
     }
   }
 

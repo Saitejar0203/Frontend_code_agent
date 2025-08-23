@@ -39,7 +39,7 @@ export class DownloadService {
   /**
    * Download all project files as a ZIP
    */
-  public async downloadProject(): Promise<void> {
+  public async downloadProject(customFilename?: string): Promise<void> {
     try {
       // Get the current file tree from WebContainer
       await this.actionRunner.refreshFileTree();
@@ -68,7 +68,15 @@ export class DownloadService {
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.href = url;
-      a.download = 'project.zip';
+      
+      // Use custom filename if provided, otherwise default to 'project.zip'
+      if (customFilename) {
+        const timestamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, -5);
+        a.download = `${customFilename}_S23_${timestamp}.zip`;
+      } else {
+        a.download = 'project.zip';
+      }
+      
       document.body.appendChild(a);
       a.click();
       document.body.removeChild(a);
