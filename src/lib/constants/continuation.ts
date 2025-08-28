@@ -1,6 +1,12 @@
 // Constants for LLM response continuation logic
 
 /**
+ * Finish tag that indicates the agent has completed its task
+ * This tag signals that no further continuation or validation is needed
+ */
+export const FINISH_TAG = '<FinishS2394>';
+
+/**
  * Maximum number of continuation segments allowed for a single response
  * This prevents infinite loops in case of persistent truncation
  */
@@ -73,23 +79,8 @@ export const VALIDATION_PROMPT = `Review the entire conversation between human a
 
 IMPORTANT: If terminal output is provided below, analyze it for any errors, warnings, or issues. Note that some commands from the conversation history might still be processing or pending execution.
 
-If the code is satisfactory and meets all requirements, respond with <validation_complete> and nothing else #very important to use only <validation_complete>
+If the code is satisfactory and meets all requirements, respond with ${FINISH_TAG} and nothing else.
 If code corrections are needed, provide ONLY the necessary corrective actions. If the original response was within a <boltArtifact> context, wrap your corrective actions within the appropriate <boltArtifact id="[artifactId]" title="[title]"> tag. Provide complete file modifications followed by terminal commands that should be executed AFTER all pending commands complete. Do NOT include explanatory text. **You MUST NOT create a \`plan.md\` file during this validation step.**`;
 
-/**
- * Tags that indicate validation is complete and approved
- */
-export const VALIDATION_COMPLETE_TAGS = [
-  '<validation_complete>',
-  '<code_approved>',
-  '<validation_approved>'
-] as const;
-
-/**
- * Check if a validation response indicates the code is approved
- */
-export function isValidationApproved(response: string | null | undefined): boolean {
-  if (!response) return false;
-  const content = response.toLowerCase();
-  return VALIDATION_COMPLETE_TAGS.some(tag => content.includes(tag.toLowerCase()));
-}
+// Note: VALIDATION_COMPLETE_TAGS and isValidationApproved removed
+// Validation completion now uses direct string comparison with FINISH_TAG
