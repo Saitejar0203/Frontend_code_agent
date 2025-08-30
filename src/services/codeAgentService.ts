@@ -1,7 +1,7 @@
 // frontend/src/services/codeAgentService.ts
 import { StreamingMessageParser, ParserCallbacks } from '@/lib/runtime/StreamingMessageParser';
 import { ActionRunner } from '@/lib/runtime/ActionRunner';
-import { addMessage, addMessageWithImages, updateMessage, setGenerating, setThinking, addToConversationHistory, buildConversationHistory, setAssistantStatus, setStatusMessage, clearAssistantStatus, completeAssistantStatus, type Message, type ImageAttachment } from '@/lib/stores/chatStore';
+import { addMessage, addMessageWithImages, updateMessage, setGenerating, setThinking, addToConversationHistory, buildConversationHistory, setAssistantStatus, setStatusMessage, clearAssistantStatus, completeAssistantStatus, completeAndHideStatus, type Message, type ImageAttachment } from '@/lib/stores/chatStore';
 import { chatStore } from '@/lib/stores/chatStore';
 import { addArtifact, addArtifactAndPrepareExecution, addActionToArtifact, addOrUpdateFileFromAction, resetWorkbenchForNewConversation, workbenchStore } from '@/lib/stores/workbenchStore';
 import { WebContainer } from '@webcontainer/api';
@@ -230,8 +230,7 @@ async function sendChatMessageInternal(userInput: string, webcontainer: WebConta
   
   setGenerating(true);
   setThinking(true);
-  setAssistantStatus('thinking');
-  setStatusMessage('Processing your request...');
+  setAssistantStatus('thinking'); // Initial "Thinking..." state
   console.log('⏳ Set generating to true and thinking to true');
   
   // ----------------- START OF CORRECTED FIX -----------------
@@ -311,8 +310,13 @@ async function sendChatMessageInternal(userInput: string, webcontainer: WebConta
         console.log('📝 Received text chunk:', text);
         // Stop thinking animation when first text arrives
         setThinking(false);
-        setAssistantStatus('generating');
-        setStatusMessage('Generating response...');
+        
+        // Only change status on the first text chunk
+        const currentStatus = chatStore.get().assistantStatus;
+        if (currentStatus === 'thinking' || currentStatus === 'validating_thinking') {
+          const newStatus = currentStatus === 'thinking' ? 'generating' : 'validating_generating';
+          setAssistantStatus(newStatus); // Switches from "Thinking" to "Generating"
+        }
         if (text && text.trim()) {
           // Only accumulate text that is not inside XML tags
           const parser = (callbacks as any)._parser;
@@ -421,8 +425,10 @@ async function sendChatMessageInternal(userInput: string, webcontainer: WebConta
       
       // Continue with next segment
       console.log('🔄 Response truncated, continuing...', { finishReason: result.finishReason, segmentCount });
-      setAssistantStatus('max_tokens');
-      setStatusMessage('Continuing due to length limit...');
+      setAssistantStatus('continuing'); // Show continuation message
+      
+      // Add a brief pause so the user can read the message
+      await new Promise(resolve => setTimeout(resolve, 1500));
       
       // Update conversation history with current response
       if (result.fullResponse.trim()) {
@@ -435,9 +441,9 @@ async function sendChatMessageInternal(userInput: string, webcontainer: WebConta
     
     // 2. UNCONDITIONAL VALIDATION STEP
     console.log('🔍 Proceeding to validation phase...');
-    // Add the complete initial response to the history for the validation agent to see
-    conversationHistory.push({ role: 'assistant', content: fullCombinedResponse });
-    const validationResponse = await performValidationLoop(conversationHistory, callbacks, segmentCount);
+    // Create a copy of conversation history for validation to avoid polluting the original
+    const validationHistory = [...conversationHistory, { role: 'assistant', content: fullCombinedResponse }];
+    const validationResponse = await performValidationLoop(validationHistory, callbacks, segmentCount);
     
     // Append any corrective actions from validation to the full response
     fullCombinedResponse += validationResponse;
@@ -458,8 +464,8 @@ async function sendChatMessageInternal(userInput: string, webcontainer: WebConta
         rawContent: rawResponse 
       });
       
-      // Add to conversation history with original content (preserving tags for context)
-      addToConversationHistory('assistant', lastMessage.content, rawResponse);
+      // Add to conversation history with raw content (preserving tags for context)
+      addToConversationHistory('assistant', rawResponse);
       console.log('📚 Added agent response to conversation history with raw content and stripped display content');
     }
     
@@ -532,15 +538,21 @@ async function performValidationLoop(
 ): Promise<string> {
   console.log('🔍 Starting validation loop...');
   
+  // Create a local copy to avoid modifying the original conversation history
+  const localHistory = [...conversationHistory];
+  
   // Set validation flag to prevent premature status completion
   messageQueue.setValidationInProgress(true);
   
-  setAssistantStatus('validation');
-  setStatusMessage('Starting validation...');
+  setAssistantStatus('validating'); // Show initial validation message
+  // Add a brief pause for readability
+  await new Promise(resolve => setTimeout(resolve, 1500));
   let validationResponse = '';
   
   for (let i = 0; i < MAX_VALIDATION_ITERATIONS; i++) {
     console.log(`🔍 Validation iteration ${i + 1}/${MAX_VALIDATION_ITERATIONS}`);
+    
+    setAssistantStatus('validating_thinking'); // "Thinking" for validation call
     
     // Get current terminal output for validation context
     const terminalOutput = workbenchStore.get().terminalOutput;
@@ -551,7 +563,7 @@ async function performValidationLoop(
       : VALIDATION_PROMPT;
     
     const validationHistory = [
-      ...conversationHistory,
+      ...localHistory,
       { role: 'user', content: validationPromptWithTerminal }
     ];
     
@@ -569,8 +581,8 @@ async function performValidationLoop(
       const placeholderResponse = `[Empty response in validation iteration ${i + 1}]`;
       validationResponse += placeholderResponse;
       
-      // Add placeholder to conversation history
-      conversationHistory.push({
+      // Add placeholder to local history
+      localHistory.push({
         role: 'assistant',
         content: placeholderResponse
       });
@@ -592,8 +604,8 @@ async function performValidationLoop(
       break;
     }
     
-    // Add validation response to history for next iteration
-    conversationHistory.push({
+    // Add validation response to local history for next iteration
+    localHistory.push({
       role: 'assistant',
       content: result.fullResponse
     });
@@ -605,7 +617,7 @@ async function performValidationLoop(
   
   // Clear validation flag and complete status
   messageQueue.setValidationInProgress(false);
-  completeAssistantStatus('Validation completed');
+  completeAndHideStatus('Validation completed');
   
   return validationResponse;
 }

@@ -63,6 +63,7 @@ class ActionRunner {
   private fileActionQueue: BoltAction[] = [];
   private shellActionQueue: BoltAction[] = [];
   private isProcessing = false;
+  private processingScheduled = false;
   private actionIdMap: Map<BoltAction, string> = new Map(); // Track action IDs
   private artifactIdMap: Map<BoltAction, string> = new Map(); // Track artifact IDs
 
@@ -173,7 +174,7 @@ class ActionRunner {
     addActionStatus(actionId, actionState);
 
     // Trigger the processing loop, but don't wait for it
-    this.processQueues();
+    this.scheduleProcessing();
     
     return actionId;
   }
@@ -197,6 +198,20 @@ class ActionRunner {
       type: 'shell',
       content: command
     }, artifactId);
+  }
+
+  private scheduleProcessing(): void {
+    if (this.processingScheduled) {
+      return;
+    }
+    
+    this.processingScheduled = true;
+    
+    // Use setTimeout to ensure all synchronous actions are queued first
+    setTimeout(() => {
+      this.processingScheduled = false;
+      this.processQueues();
+    }, 0);
   }
 
   /**
@@ -329,6 +344,7 @@ class ActionRunner {
     this.fileActionQueue = [];
     this.shellActionQueue = [];
     this.isProcessing = false;
+    this.processingScheduled = false;
     
     // Clear action and artifact ID mappings
     this.actionIdMap.clear();
@@ -362,6 +378,7 @@ class ActionRunner {
 
     // 3. Reset the processing flag to ensure the queue can run again.
     this.isProcessing = false;
+    this.processingScheduled = false;
 
     appendTerminalOutput('\n🔄 Ready for new instructions...\n');
   }

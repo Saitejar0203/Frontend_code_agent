@@ -34,6 +34,16 @@ export interface FileModificationSummary {
   timestamp: Date;
 }
 
+export type AssistantStatus = 
+  | 'idle'          // Doing nothing
+  | 'thinking'      // Initial API call, waiting for the first byte
+  | 'generating'    // Streaming code or text
+  | 'continuing'    // Preparing for a continuation call (due to token limit)
+  | 'validating'    // Starting the validation loop
+  | 'validating_thinking' // Making the validation API call
+  | 'validating_generating' // Streaming corrective code from validation
+  | 'completed';    // Process finished, status bar will hide
+
 export interface ChatState {
   messages: Message[];
   isGenerating: boolean;
@@ -42,7 +52,7 @@ export interface ChatState {
   error: string | null;
   conversationHistory: ConversationEntry[];
   fileModifications: FileModificationSummary[];
-  assistantStatus: 'idle' | 'thinking' | 'validation' | 'max_tokens' | 'completed';
+  assistantStatus: AssistantStatus;
   statusMessage: string;
   statusStartTime: Date | null;
 }
@@ -158,14 +168,43 @@ export function startNewChat() {
 
 // Assistant status management
 export function setAssistantStatus(
-  status: 'idle' | 'thinking' | 'validation' | 'max_tokens' | 'completed',
+  status: AssistantStatus,
   message?: string
 ) {
-  chatStore.setKey('assistantStatus', status);
-  if (message !== undefined) {
-    chatStore.setKey('statusMessage', message);
-  }
+  let statusMessage = message || '';
   
+  // Set default messages for each status
+  if (!message) {
+    switch (status) {
+      case 'thinking':
+        statusMessage = 'Thinking...';
+        break;
+      case 'generating':
+        statusMessage = 'Generating code...';
+        break;
+      case 'continuing':
+        statusMessage = 'Model hit token limit, continuing response...';
+        break;
+      case 'validating':
+        statusMessage = 'Let us validate the code for bugs...';
+        break;
+      case 'validating_thinking':
+        statusMessage = 'Validating...';
+        break;
+      case 'validating_generating':
+        statusMessage = 'Generating corrections...';
+        break;
+      case 'completed':
+        statusMessage = 'Validation complete.';
+        break;
+      default:
+        statusMessage = '';
+    }
+  }
+
+  chatStore.setKey('assistantStatus', status);
+  chatStore.setKey('statusMessage', statusMessage);
+
   // Set start time for active states, preserve for completed state
   if (status !== 'idle' && status !== 'completed') {
     chatStore.setKey('statusStartTime', new Date());
@@ -191,6 +230,14 @@ export function completeAssistantStatus(message?: string) {
   chatStore.setKey('assistantStatus', 'completed');
   chatStore.setKey('statusMessage', message || `Completed in ${elapsedTime}s`);
   // Keep statusStartTime for elapsed time calculation
+}
+
+// Action to hide the status bar after a delay
+export function completeAndHideStatus(message?: string) {
+  setAssistantStatus('completed', message);
+  setTimeout(() => {
+    chatStore.setKey('assistantStatus', 'idle');
+  }, 2000); // Hide after 2 seconds
 }
 export function clearUIMessages() {
   chatStore.setKey('messages', []);

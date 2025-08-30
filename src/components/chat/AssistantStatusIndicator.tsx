@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { useStore } from '@nanostores/react';
-import { Check, Clock, AlertTriangle, Zap } from 'lucide-react';
+import { Check, Clock, AlertTriangle, Zap, Code } from 'lucide-react';
 import { chatStore } from '@/lib/stores/chatStore';
 
 interface AssistantStatusIndicatorProps {
@@ -34,6 +34,7 @@ export const AssistantStatusIndicator: React.FC<AssistantStatusIndicatorProps> =
   const getStatusConfig = () => {
     switch (assistantStatus) {
       case 'thinking':
+      case 'validating_thinking':
         return {
           icon: <Zap className="w-4 h-4 text-blue-500" />,
           text: statusMessage || 'Thinking...',
@@ -43,7 +44,29 @@ export const AssistantStatusIndicator: React.FC<AssistantStatusIndicatorProps> =
           showDots: true,
           animationSpeed: '1.4s'
         };
-      case 'validation':
+      case 'generating':
+      case 'validating_generating':
+        return {
+          icon: <Code className="w-4 h-4 text-green-500" />,
+          text: statusMessage || 'Generating code...',
+          bgColor: 'bg-green-50',
+          borderColor: 'border-green-200',
+          textColor: 'text-green-700',
+          showDots: true,
+          animationSpeed: '1.4s'
+        };
+      case 'continuing':
+      case 'validating':
+        return {
+          icon: <AlertTriangle className="w-4 h-4 text-amber-500" />,
+          text: statusMessage,
+          bgColor: 'bg-amber-50',
+          borderColor: 'border-amber-200',
+          textColor: 'text-amber-700',
+          showDots: false,
+          animationSpeed: '0s'
+        };
+      case 'validation': // Keep backward compatibility
         return {
           icon: <AlertTriangle className="w-4 h-4 text-amber-500" />,
           text: statusMessage || 'Validating code...',
