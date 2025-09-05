@@ -7,18 +7,15 @@ import {
   Folder, 
   FolderOpen, 
   Search,
-  Plus,
   MoreHorizontal,
-  FileText,
-  FolderPlus,
   Copy,
   Scissors,
   Trash2,
   Download,
   Edit3,
-  Eye,
-  EyeOff,
-  Archive
+  Archive,
+  FileText,
+  FolderPlus
 } from 'lucide-react';
 import { workbenchStore, setSelectedFile, toggleFolder, type FileNode } from '@/lib/stores/workbenchStore';
 import { Button } from '@/components/ui/button';
@@ -31,12 +28,7 @@ import {
   ContextMenuSeparator, 
   ContextMenuTrigger, 
 } from '@/components/ui/context-menu'; 
-import { 
-  DropdownMenu, 
-  DropdownMenuContent, 
-  DropdownMenuItem, 
-  DropdownMenuTrigger, 
-} from '@/components/ui/dropdown-menu'; 
+ 
 import { getDownloadService } from '@/services/downloadService'; 
 import { useWebContainer } from '@/components/WebContainer/WebContainerProvider'; 
 import { ActionRunner } from '@/lib/runtime/ActionRunner';
@@ -49,7 +41,7 @@ interface FileExplorerProps {
 const FileExplorer: React.FC<FileExplorerProps> = ({ className, onFileSelect }) => {
   const { fileTree: files, selectedFile, modifiedFiles } = useStore(workbenchStore);
   const [searchQuery, setSearchQuery] = useState('');
-  const [showHiddenFiles, setShowHiddenFiles] = useState(false);
+
   const [draggedItem, setDraggedItem] = useState<FileNode | null>(null);
   const [dragOverItem, setDragOverItem] = useState<string | null>(null);
   const [contextMenuNode, setContextMenuNode] = useState<FileNode | null>(null);
@@ -78,14 +70,9 @@ const FileExplorer: React.FC<FileExplorerProps> = ({ className, onFileSelect }) 
     );
   };
 
-  // Filter files based on search and hidden files setting
+  // Filter files based on search query
   const filterFiles = useCallback((nodes: FileNode[]): FileNode[] => {
     return nodes.filter(node => {
-      // Filter hidden files
-      if (!showHiddenFiles && node.name.startsWith('.')) {
-        return false;
-      }
-      
       // Filter by search query
       if (searchQuery && !node.name.toLowerCase().includes(searchQuery.toLowerCase())) {
         // Check if any children match for folders
@@ -106,7 +93,7 @@ const FileExplorer: React.FC<FileExplorerProps> = ({ className, onFileSelect }) 
       }
       return node;
     });
-  }, [searchQuery, showHiddenFiles]);
+  }, [searchQuery]);
 
   const handleFileClick = useCallback((file: FileNode) => {
     if (file.type === 'file') {
@@ -329,42 +316,18 @@ const FileExplorer: React.FC<FileExplorerProps> = ({ className, onFileSelect }) 
       <div className="border-b border-gray-200 dark:border-gray-700 p-3">
         <div className="flex items-center justify-between mb-2">
           <h3 className="text-sm font-medium text-gray-700 dark:text-gray-300">Files</h3>
-          <div className="flex items-center space-x-1">
+          <div className="flex items-center">
             <Button
               variant="ghost"
               size="sm"
               onClick={handleDownloadProject}
               disabled={isDownloading || !files || files.length === 0}
-              className="h-6 w-6 p-0"
+              className="h-7 px-3 py-1 flex items-center space-x-2"
               title="Download Project as ZIP"
             >
               <Archive className={`w-3 h-3 ${isDownloading ? 'animate-pulse' : ''}`} />
+              <span className="text-xs font-medium">Download</span>
             </Button>
-            <Button
-              variant="ghost"
-              size="sm"
-              onClick={() => setShowHiddenFiles(!showHiddenFiles)}
-              className="h-6 w-6 p-0"
-            >
-              {showHiddenFiles ? <Eye className="w-3 h-3" /> : <EyeOff className="w-3 h-3" />}
-            </Button>
-            <DropdownMenu>
-              <DropdownMenuTrigger asChild>
-                <Button variant="ghost" size="sm" className="h-6 w-6 p-0">
-                  <Plus className="w-3 h-3" />
-                </Button>
-              </DropdownMenuTrigger>
-              <DropdownMenuContent>
-                <DropdownMenuItem onClick={() => handleCreateFile()}>
-                  <FileText className="w-4 h-4 mr-2" />
-                  New File
-                </DropdownMenuItem>
-                <DropdownMenuItem onClick={() => handleCreateFolder()}>
-                  <FolderPlus className="w-4 h-4 mr-2" />
-                  New Folder
-                </DropdownMenuItem>
-              </DropdownMenuContent>
-            </DropdownMenu>
           </div>
         </div>
         <div className="relative">

@@ -15,6 +15,14 @@ const Index = () => {
   
   const agents = [
     {
+      title: "Code Agent",
+      description: "Advanced code analysis, generation, and refactoring assistant powered by cutting-edge AI.",
+      model: "Gemini 2.5 Pro",
+      tools: "WebSearch, Image Generation",
+      icon: Code,
+      id: "code-agent"
+    },
+    {
       title: "Qoffee",
       description: "Advanced news research and analysis with deep research architecture.",
       model: "Gemini 2.5 Pro",
@@ -45,14 +53,6 @@ const Index = () => {
       tools: [],
       icon: Settings,
       id: "auto-prompt"
-    },
-    {
-      title: "Code Agent",
-      description: "Advanced code analysis, generation, and refactoring assistant powered by cutting-edge AI.",
-      model: "Gemini 2.5 Flash",
-      tools: [],
-      icon: Code,
-      id: "code-agent"
     },
     {
       title: "Coming Soon",

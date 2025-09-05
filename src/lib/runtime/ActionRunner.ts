@@ -63,6 +63,7 @@ class ActionRunner {
   private fileActionQueue: BoltAction[] = [];
   private shellActionQueue: BoltAction[] = [];
   private isProcessing = false;
+  private processTimeout: NodeJS.Timeout | null = null; // Add timeout for batching actions
   private actionIdMap: Map<BoltAction, string> = new Map(); // Track action IDs
   private artifactIdMap: Map<BoltAction, string> = new Map(); // Track artifact IDs
 
@@ -172,8 +173,13 @@ class ActionRunner {
     // Add to the reactive store for UI tracking
     addActionStatus(actionId, actionState);
 
-    // Trigger the processing loop, but don't wait for it
-    this.processQueues();
+    // Trigger the processing loop with batching to prevent race conditions
+    if (!this.processTimeout) {
+      this.processTimeout = setTimeout(() => {
+        this.processQueues();
+        this.processTimeout = null;
+      }, 0); // Use a macrotask to batch actions
+    }
     
     return actionId;
   }
