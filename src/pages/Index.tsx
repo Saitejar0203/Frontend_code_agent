@@ -16,7 +16,7 @@ const Index = () => {
   const agents = [
     {
       title: "Code Agent",
-      description: "Advanced code analysis, generation, and refactoring assistant powered by cutting-edge AI.",
+      description: "Build beautiful web apps by just using prompts - powered by cutting-edge AI.",
       model: "Gemini 2.5 Pro",
       tools: "WebSearch, Image Generation",
       icon: Code,
