@@ -2,9 +2,6 @@ import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { useStore } from '@nanostores/react';
 import { Editor } from '@monaco-editor/react';
 import { 
-  Search, 
-  Save, 
-  MoreHorizontal, 
   X, 
   FileText,
   ChevronDown
@@ -14,12 +11,7 @@ import { ActionRunner } from '@/lib/runtime/ActionRunner';
 import { useWebContainer } from '@/components/WebContainer/WebContainerProvider';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuTrigger,
-} from '@/components/ui/dropdown-menu';
+
 import { Badge } from '@/components/ui/badge';
 
 interface CodeEditorProps {
@@ -293,50 +285,7 @@ export function CodeEditor({ className }: CodeEditorProps) {
             </div>
           ))}
         </div>
-        
-        {/* Editor Actions */}
-        <div className="flex items-center px-2 space-x-1">
-          <Button
-            variant="ghost"
-            size="sm"
-            onClick={() => setShowFindReplace(!showFindReplace)}
-            className="h-8 w-8 p-0"
-          >
-            <Search className="w-4 h-4" />
-          </Button>
-          
-          <Button
-            variant="ghost"
-            size="sm"
-            onClick={saveCurrentFile}
-            disabled={!activeTab?.isDirty}
-            className="h-8 w-8 p-0"
-          >
-            <Save className="w-4 h-4" />
-          </Button>
-          
-          <DropdownMenu>
-            <DropdownMenuTrigger asChild>
-              <Button variant="ghost" size="sm" className="h-8 w-8 p-0">
-                <MoreHorizontal className="w-4 h-4" />
-              </Button>
-            </DropdownMenuTrigger>
-            <DropdownMenuContent>
-              <DropdownMenuItem onClick={() => setShowFindReplace(true)}>
-                <Search className="w-4 h-4 mr-2" />
-                Find & Replace
-              </DropdownMenuItem>
-              <DropdownMenuItem onClick={saveCurrentFile} disabled={!activeTab?.isDirty}>
-                <Save className="w-4 h-4 mr-2" />
-                Save File
-              </DropdownMenuItem>
-              <DropdownMenuItem onClick={saveAllFiles}>
-                <Save className="w-4 h-4 mr-2" />
-                Save All
-              </DropdownMenuItem>
-            </DropdownMenuContent>
-          </DropdownMenu>
-        </div>
+
       </div>
 
       {/* Find/Replace Bar */}

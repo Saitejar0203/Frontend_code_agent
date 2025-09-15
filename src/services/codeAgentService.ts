@@ -5,7 +5,7 @@ import { addMessage, addMessageWithImages, updateMessage, setGenerating, setThin
 import { chatStore } from '@/lib/stores/chatStore';
 import { addArtifact, addArtifactAndPrepareExecution, addActionToArtifact, addOrUpdateFileFromAction, resetWorkbenchForNewConversation, workbenchStore } from '@/lib/stores/workbenchStore';
 import { WebContainer } from '@webcontainer/api';
-import { MAX_RESPONSE_SEGMENTS, CONTINUE_PROMPT, isTruncationFinishReason, isNullResponse, MAX_VALIDATION_ITERATIONS, VALIDATION_PROMPT, isValidationApproved } from '@/lib/constants/continuation';
+import { MAX_RESPONSE_SEGMENTS, CONTINUE_PROMPT, isTruncationFinishReason, isNullResponse, MAX_VALIDATION_ITERATIONS, VALIDATION_PROMPT, isValidationApproved, VALIDATION_COMPLETE_TAGS } from '@/lib/constants/continuation';
 import { imageGenerationService } from './imageGenerationService';
 
 // Message queue for handling requests when WebContainer is not ready
@@ -474,9 +474,16 @@ async function sendChatMessageInternal(userInput: string, webcontainer: WebConta
     // Update conversation history with the complete raw response
     const lastMessage = chatStore.get().messages.slice(-1)[0];
     if (lastMessage && lastMessage.sender === 'agent' && rawResponse.trim()) {
-      updateMessage(lastMessage.id, { rawContent: rawResponse });
-      addToConversationHistory('assistant', lastMessage.content, rawResponse);
-      console.log('📚 Added agent response to conversation history with raw content');
+      // Process content for clean UI display by removing validation tags
+      const displayContent = processResponseForDisplay(lastMessage.content);
+      
+      // Update message with processed content for display, preserve raw content for history
+      updateMessage(lastMessage.id, { 
+        content: displayContent,
+        rawContent: rawResponse 
+      });
+      addToConversationHistory('assistant', displayContent, rawResponse);
+      console.log('📚 Added agent response to conversation history with processed display content and raw content');
     }
     
   } catch (error) {
@@ -608,6 +615,20 @@ async function performValidationLoop(
 }
 
 /**
+ * Process response content for clean UI display by removing validation tags
+ */
+function processResponseForDisplay(content: string): string {
+  let processedContent = content;
+  
+  // Strip validation tags for clean UI display
+  VALIDATION_COMPLETE_TAGS.forEach(tag => {
+    processedContent = processedContent.replace(new RegExp(tag.replace(/[<>]/g, '\\$&'), 'gi'), '').trim();
+  });
+  
+  return processedContent;
+}
+
+/**
  * Converts ImageAttachment objects to API-compatible format
  * Extracts base64 data and MIME type from DataURL preview
  */
@@ -654,7 +675,8 @@ export async function streamAgentResponse(
   console.log('🔄 streamAgentResponse started with prompt:', prompt, 'segment:', segmentCount);
   const parser = new StreamingMessageParser(callbacks);
   // Use the new Gemini API endpoint
-  const apiBaseUrl = 'http://localhost:8002';
+  // Prefer environment variable so production deployment can target Railway backend
+  const apiBaseUrl = import.meta.env.VITE_CODE_AGENT_URL || 'http://localhost:8002';
   console.log('🌐 Making API call to:', `${apiBaseUrl}/api/v1/chat`);
   console.log('🔧 Parser callbacks configured:', Object.keys(callbacks));
   
